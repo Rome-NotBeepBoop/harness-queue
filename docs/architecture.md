@@ -18,8 +18,8 @@ Harness Queue (`hq`) is architected around four decoupled layers:
 ┌─────────────▼─────────────┐┌─────────────▼─────────────┐
 │     Terminal Adapters     ││      Harness Adapters     │
 │  - Herdr CLI / Socket     ││  - Codex (App-Server RPC) │
-│  - Ghostty (AppleScript)  ││  - Claude Code            │
-│  - Mock Adapter           ││  - OpenCode / OMP / Pi    │
+│  - Mock Adapter           ││  - Claude Code            │
+│                           ││  - OpenCode / OMP / Pi    │
 └───────────────────────────┘└───────────────────────────┘
 ```
 
@@ -27,7 +27,7 @@ Harness Queue (`hq`) is architected around four decoupled layers:
 
 ### 1. Terminal Adapter (`src/terminal/`)
 Abstracted behind the `TerminalAdapter` trait:
-- `detect_current_pane()`: Identifies the caller's pane (using `HERDR_PANE_ID` in Herdr or working directory / TTY in Ghostty).
+- `detect_current_pane()`: Identifies the caller's pane (using `HERDR_PANE_ID` in Herdr).
 - `find_adjacent_agent()`: Searches topological neighbors (right, left, down, up) and extracts process trees (`pane process-info`).
 - `get_agent_status()`: Queries agent lifecycle state (`idle`, `working`, `blocked`, `done`, `unknown`).
 - `send_prompt()`: Submits prompts through high-level agent APIs (`herdr agent prompt`) or terminal input buffers (`input text` + `send key enter`).

@@ -100,19 +100,19 @@ fn test_uncertain_delivery_halts_subsequent_dispatches() {
 }
 
 #[test]
-fn test_ghostty_target_death_halts_supervisor() {
-    struct DeadGhosttyTerminal;
-    impl harness_queue::terminal::TerminalAdapter for DeadGhosttyTerminal {
-        fn terminal_name(&self) -> &'static str { "Ghostty" }
+fn test_target_death_halts_supervisor() {
+    struct DeadTerminal;
+    impl harness_queue::terminal::TerminalAdapter for DeadTerminal {
+        fn terminal_name(&self) -> &'static str { "Herdr" }
         fn is_available(&self) -> bool { true }
-        fn detect_current_pane(&self) -> Result<String, TerminalError> { Ok("term_ghostty_1".to_string()) }
+        fn detect_current_pane(&self) -> Result<String, TerminalError> { Ok("w1:p1".to_string()) }
         fn find_adjacent_agent(&self, _pane: &str) -> Result<NeighborDetection, TerminalError> {
             Ok(NeighborDetection::Exact(AgentTarget {
-                terminal_id: "term_ghostty_2".to_string(),
-                pane_id: "term_ghostty_2".to_string(),
-                pid: 0, // Ghostty PID is 0
+                terminal_id: "term_2".to_string(),
+                pane_id: "w1:p2".to_string(),
+                pid: 1234,
                 harness: HarnessKind::Codex,
-                session_id: "sess_ghostty".to_string(),
+                session_id: "sess_1".to_string(),
                 cwd: "/tmp".to_string(),
             }))
         }
@@ -126,7 +126,7 @@ fn test_ghostty_target_death_halts_supervisor() {
         }
     }
 
-    let terminal = Arc::new(DeadGhosttyTerminal);
+    let terminal = Arc::new(DeadTerminal);
     let harness = Arc::new(MockHarness::new(HarnessKind::Codex));
 
     let mut sup = Supervisor::new(terminal, harness, Mode::AutoSend);

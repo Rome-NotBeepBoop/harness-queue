@@ -6,8 +6,8 @@ Harness Queue (`hq`) supports progressive compatibility across terminal multiple
 
 | Terminal | Compatibility | Neighbor Discovery | Input Mechanism | Status Detection | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Herdr** | **Full** | Native (`herdr pane neighbor`, `layout`) | Native (`herdr agent prompt`, `pane send-text`) | Native (`herdr agent get`, `process-info`) | Priority adapter. Supports directional neighbor discovery and socket state. |
-| **Ghostty (macOS)** | **Full** | AppleScript dictionary (`terminals of selected tab`) | AppleScript (`input text` + `send key enter`) | Process discovery & title inspection | Requires macOS Automation permission for Ghostty if prompted. |
+| **Herdr** | **Full** | Native (`herdr pane neighbor`, `layout`) | Native (`herdr agent prompt`, `pane send-text`) | Native (`herdr agent get`, `process-info`) | Primary supported terminal environment. Supports directional neighbor discovery and socket state. |
+| **Ghostty (macOS)** | **Deferred** | - | - | - | Temporarily deferred per product direction; focus is Herdr-only. |
 | **Mock** | **Full** | Simulated topology | In-memory atomic queue | State simulation | Used by automated test suite. |
 
 ## Harness Adapters

@@ -5,7 +5,6 @@ use harness_queue::cli::{
 use harness_queue::harness::create_harness_adapter;
 use harness_queue::models::Mode;
 use harness_queue::supervisor::Supervisor;
-use harness_queue::terminal::ghostty::GhosttyAdapter;
 use harness_queue::terminal::herdr::HerdrAdapter;
 use harness_queue::terminal::TerminalAdapter;
 use std::io::{self, BufReader, Write};
@@ -34,22 +33,14 @@ fn main() {
     let stdin = io::stdin();
     let mut reader = BufReader::new(stdin.lock());
 
-    // 1. Detect terminal adapter (Herdr first, then Ghostty)
-    let terminal: Arc<dyn TerminalAdapter> = {
-        let herdr = Arc::new(HerdrAdapter::new());
-        if herdr.is_available() {
-            herdr
-        } else {
-            let ghostty = Arc::new(GhosttyAdapter::new());
-            if ghostty.is_available() {
-                ghostty
-            } else {
-                eprintln!("Error: neither Herdr nor Ghostty environment was detected.");
-                eprintln!("Please run hq inside a Herdr pane or Ghostty tab with an adjacent agent.");
-                std::process::exit(1);
-            }
-        }
-    };
+    // 1. Detect terminal adapter (Herdr only)
+    let herdr = Arc::new(HerdrAdapter::new());
+    if !herdr.is_available() {
+        eprintln!("Error: Herdr environment was not detected.");
+        eprintln!("Please run hq inside a Herdr pane with an adjacent agent.");
+        std::process::exit(1);
+    }
+    let terminal: Arc<dyn TerminalAdapter> = herdr;
 
     // 2. Discover adjacent agent
     let current_pane = match terminal.detect_current_pane() {
