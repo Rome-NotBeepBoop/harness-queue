@@ -91,6 +91,7 @@ impl StateMachine {
                     | State::AgentBusy
                     | State::RateLimited
                     | State::WaitingForRecovery
+                    | State::DeliveryUncertain
             ),
             State::RateLimited => matches!(to, State::WaitingForRecovery | State::RecoveringSession | State::AgentReady),
             State::WaitingForRecovery => matches!(to, State::RecoveringSession | State::AgentReady),
@@ -98,7 +99,7 @@ impl StateMachine {
             State::AgentReady => matches!(to, State::Submitting | State::AgentBusy | State::RateLimited | State::Watching),
             State::Submitting => matches!(to, State::PromptAcknowledged | State::DeliveryUncertain | State::AgentBusy | State::Error),
             State::PromptAcknowledged => matches!(to, State::AgentBusy | State::AgentReady | State::Watching),
-            State::DeliveryUncertain => matches!(to, State::AgentReady | State::AgentBusy | State::Watching),
+            State::DeliveryUncertain => matches!(to, State::Watching | State::SelectingMode),
             State::AgentBusy => matches!(to, State::AgentReady | State::RateLimited | State::Watching),
             State::Error | State::Detached => false,
         }

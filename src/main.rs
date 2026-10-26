@@ -1,5 +1,6 @@
 use harness_queue::cli::{
-    format_agent_detection, format_mode_selection_menu, read_mode_selection, read_prompt_input,
+    format_agent_detection, format_mode_selection_menu, read_mode_selection, read_prompt_event,
+    read_prompt_input, InputEvent,
 };
 use harness_queue::harness::create_harness_adapter;
 use harness_queue::models::Mode;
@@ -15,7 +16,19 @@ use std::time::Duration;
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
+extern "C" {
+    fn signal(sig: i32, handler: extern "C" fn(i32)) -> usize;
+}
+
+extern "C" fn sigint_handler(_: i32) {
+    RUNNING.store(false, Ordering::SeqCst);
+}
+
 fn main() {
+    unsafe {
+        signal(2, sigint_handler); // 2 = SIGINT (Ctrl+C)
+    }
+
     let stdout = io::stdout();
     let mut out = stdout.lock();
     let stdin = io::stdin();
@@ -126,14 +139,19 @@ fn main() {
         let mut r = BufReader::new(stdin.lock());
         let mut out = io::stdout();
 
-        loop {
-            if let Some(p) = read_prompt_input(&mut r, &mut out, "\n› Next prompt:\n") {
-                if input_tx.send(p).is_err() {
+        while RUNNING.load(Ordering::SeqCst) {
+            match read_prompt_event(&mut r, &mut out, "\n› Next prompt:\n") {
+                InputEvent::Text(p) => {
+                    if input_tx.send(p).is_err() {
+                        break;
+                    }
+                }
+                InputEvent::Empty => {
+                    thread::sleep(Duration::from_millis(200));
+                }
+                InputEvent::Eof => {
                     break;
                 }
-            } else {
-                // Short sleep on empty input
-                thread::sleep(Duration::from_millis(200));
             }
         }
     });
@@ -164,4 +182,10 @@ fn main() {
 
         thread::sleep(Duration::from_millis(500));
     }
+
+    let _ = supervisor
+        .state_machine
+        .transition(harness_queue::models::State::Detached);
+    let _ = writeln!(out, "\n✓ Detached cleanly");
+    let _ = out.flush();
 }

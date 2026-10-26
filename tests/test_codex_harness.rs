@@ -82,3 +82,15 @@ fn test_codex_capabilities() {
     assert!(caps.can_check_quota);
     assert!(caps.can_auto_resume);
 }
+
+#[test]
+fn test_codex_rate_limits_missing_response_fails_safe() {
+    let unparsed = r#"{"id":999,"result":{}}"#;
+    let res = parse_rate_limits_payload(unparsed);
+    // If rateLimits payload is completely missing, should report Unknown rather than assuming Available
+    match res {
+        Ok(QuotaStatus::Unknown) | Err(_) => {},
+        Ok(QuotaStatus::Available) => panic!("Should not blindly report Available on missing rateLimits payload"),
+        _ => {},
+    }
+}

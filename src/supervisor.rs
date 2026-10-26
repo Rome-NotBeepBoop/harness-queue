@@ -85,20 +85,23 @@ impl Supervisor {
 
         let mut events = Vec::new();
 
-        // 1. Verify target process integrity (PID / pane check)
-        if target.pid > 0 {
-            let alive = self
-                .terminal
-                .verify_target_alive(&target)
-                .map_err(|e| format!("Target verification error: {}", e))?;
+        // 1. Verify target process integrity (PID / pane check across all terminals)
+        let alive = self
+            .terminal
+            .verify_target_alive(&target)
+            .map_err(|e| format!("Target verification error: {}", e))?;
 
-            if !alive {
-                let _ = self.state_machine.transition(State::Error);
-                return Err(
-                    "Target agent process changed or died! Halting prompt delivery safely."
-                        .to_string(),
-                );
-            }
+        if !alive {
+            let _ = self.state_machine.transition(State::Error);
+            return Err(
+                "Target agent process changed or died! Halting prompt delivery safely."
+                    .to_string(),
+            );
+        }
+
+        // Halt dispatch if any item is in uncertain delivery
+        if self.queue.all_items().iter().any(|i| i.status == crate::models::ItemStatus::Uncertain) {
+            return Ok(events);
         }
 
         // 2. Check quota status

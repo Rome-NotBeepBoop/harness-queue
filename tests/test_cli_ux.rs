@@ -23,3 +23,32 @@ fn test_cli_ux_formatting() {
     assert!(menu.contains("2) Auto-send"));
     assert!(menu.contains("› Select [1]:"));
 }
+
+#[test]
+fn test_read_prompt_eof_handling() {
+    use harness_queue::cli::{read_prompt_event, InputEvent};
+    use std::io::Cursor;
+
+    let mut empty_input = Cursor::new(b"");
+    let mut out = Vec::new();
+    let event = read_prompt_event(&mut empty_input, &mut out, "› Prompt: ");
+    assert!(matches!(event, InputEvent::Eof));
+}
+
+#[test]
+fn test_read_prompt_multiline_paste() {
+    use harness_queue::cli::{read_prompt_event, InputEvent};
+    use std::io::Cursor;
+
+    let input_bytes = b"line 1\nline 2\n\n";
+    let mut input = Cursor::new(input_bytes);
+    let mut out = Vec::new();
+    let event = read_prompt_event(&mut input, &mut out, "› Prompt: ");
+    match event {
+        InputEvent::Text(txt) => {
+            assert!(txt.contains("line 1"));
+            assert!(txt.contains("line 2"));
+        }
+        _ => panic!("Expected multiline Text event"),
+    }
+}

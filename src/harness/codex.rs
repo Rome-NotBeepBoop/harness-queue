@@ -12,9 +12,15 @@ pub fn parse_rate_limits_payload(json_str: &str) -> Result<QuotaStatus, HarnessE
         .map_err(|e| HarnessError::QuotaCheckFailed(e.to_string()))?;
 
     let root = v.get("result").unwrap_or(&v);
-    let ordinary_allowed = root.get("ordinaryUsageAllowed").and_then(|a| a.as_bool()).unwrap_or(true);
+    let ordinary_opt = root.get("ordinaryUsageAllowed").and_then(|a| a.as_bool());
+    let rate_limits_opt = root.get("rateLimits");
 
-    let rate_limits = root.get("rateLimits").unwrap_or(root);
+    if ordinary_opt.is_none() && rate_limits_opt.is_none() {
+        return Ok(QuotaStatus::Unknown);
+    }
+
+    let ordinary_allowed = ordinary_opt.unwrap_or(true);
+    let rate_limits = rate_limits_opt.unwrap_or(root);
     let reached_type = rate_limits.get("rateLimitReachedType").and_then(|t| t.as_str());
     let spend_control = rate_limits.get("spendControlReached").and_then(|s| s.as_bool()).unwrap_or(false);
 
@@ -40,6 +46,7 @@ pub fn parse_rate_limits_payload(json_str: &str) -> Result<QuotaStatus, HarnessE
 
 pub struct CodexHarness {
     pub codex_bin: String,
+    last_check: std::sync::Mutex<Option<(std::time::Instant, QuotaStatus)>>,
 }
 
 impl Default for CodexHarness {
@@ -52,6 +59,7 @@ impl CodexHarness {
     pub fn new() -> Self {
         Self {
             codex_bin: "codex".to_string(),
+            last_check: std::sync::Mutex::new(None),
         }
     }
 
@@ -85,14 +93,12 @@ impl CodexHarness {
         let mut status = QuotaStatus::Available;
         let mut found = false;
 
-        for line in reader.lines().take(10) {
-            if let Ok(line_str) = line {
-                if let Ok(val) = serde_json::from_str::<Value>(&line_str) {
-                    if val.get("id").and_then(|id| id.as_i64()) == Some(2) {
-                        status = parse_rate_limits_payload(&line_str)?;
-                        found = true;
-                        break;
-                    }
+        for line_str in reader.lines().take(10).flatten() {
+            if let Ok(val) = serde_json::from_str::<Value>(&line_str) {
+                if val.get("id").and_then(|id| id.as_i64()) == Some(2) {
+                    status = parse_rate_limits_payload(&line_str)?;
+                    found = true;
+                    break;
                 }
             }
         }
@@ -103,7 +109,7 @@ impl CodexHarness {
         if found {
             Ok(status)
         } else {
-            Ok(QuotaStatus::Available)
+            Ok(QuotaStatus::Unknown)
         }
     }
 }
@@ -114,7 +120,20 @@ impl HarnessAdapter for CodexHarness {
     }
 
     fn check_quota(&self, _session_id: &str) -> Result<QuotaStatus, HarnessError> {
-        self.fetch_rate_limits()
+        let mut lock = self.last_check.lock().unwrap();
+        if let Some((instant, ref status)) = *lock {
+            let ttl = match status {
+                QuotaStatus::Available => std::time::Duration::from_secs(5),
+                _ => std::time::Duration::from_secs(2),
+            };
+            if instant.elapsed() < ttl {
+                return Ok(status.clone());
+            }
+        }
+
+        let fresh = self.fetch_rate_limits()?;
+        *lock = Some((std::time::Instant::now(), fresh.clone()));
+        Ok(fresh)
     }
 
     fn is_ready(&self, target: &AgentTarget, terminal: &dyn TerminalAdapter) -> Result<AgentReadiness, HarnessError> {
