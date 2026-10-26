@@ -1,10 +1,15 @@
+pub mod agy;
+pub mod claude;
 pub mod codex;
 pub mod mock;
+pub mod omp;
+pub mod opencode;
+pub mod pi;
 
 use crate::models::{AgentTarget, HarnessKind};
 use crate::terminal::{DeliveryAck, TerminalAdapter};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SupportLevel {
     Full,
     Partial,
@@ -69,4 +74,16 @@ pub trait HarnessAdapter: Send + Sync {
         terminal: &dyn TerminalAdapter,
     ) -> Result<DeliveryAck, HarnessError>;
     fn capabilities(&self) -> HarnessCapabilities;
+}
+
+pub fn create_harness_adapter(kind: &HarnessKind) -> Box<dyn HarnessAdapter> {
+    match kind {
+        HarnessKind::Codex => Box::new(codex::CodexHarness::new()),
+        HarnessKind::ClaudeCode => Box::new(claude::ClaudeHarness),
+        HarnessKind::OpenCode => Box::new(opencode::OpenCodeHarness),
+        HarnessKind::Omp => Box::new(omp::OmpHarness),
+        HarnessKind::Pi => Box::new(pi::PiHarness),
+        HarnessKind::Agy => Box::new(agy::AgyHarness),
+        HarnessKind::Unknown(_) => Box::new(mock::MockHarness::new(kind.clone())),
+    }
 }
