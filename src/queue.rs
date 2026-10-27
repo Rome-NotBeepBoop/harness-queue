@@ -117,6 +117,41 @@ impl QueueEngine {
         Ok(())
     }
 
+    pub fn update_prompt(
+        &mut self,
+        id: usize,
+        new_prompt: String,
+        new_attachments: Option<String>,
+    ) -> Result<(), QueueError> {
+        let item = self.get_mut(id).ok_or(QueueError::ItemNotFound(id))?;
+        if item.status != ItemStatus::Queued {
+            return Err(QueueError::InvalidStateTransition {
+                id,
+                from: item.status,
+                to: ItemStatus::Queued,
+            });
+        }
+        item.prompt = new_prompt;
+        item.attachments_summary = new_attachments;
+        Ok(())
+    }
+
+    pub fn last_queued_id(&self) -> Option<usize> {
+        self.items
+            .iter()
+            .rev()
+            .find(|i| i.status == ItemStatus::Queued)
+            .map(|i| i.id)
+    }
+
+    pub fn queued_ids(&self) -> Vec<usize> {
+        self.items
+            .iter()
+            .filter(|i| i.status == ItemStatus::Queued)
+            .map(|i| i.id)
+            .collect()
+    }
+
     pub fn all_items(&self) -> &VecDeque<QueueItem> {
         &self.items
     }

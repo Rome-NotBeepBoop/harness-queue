@@ -50,3 +50,30 @@ fn test_deduplication_and_no_double_submit() {
     q.mark_acknowledged(1).unwrap();
     assert!(q.mark_acknowledged(1).is_err());
 }
+
+#[test]
+fn test_update_prompt_while_queued() {
+    let mut q = QueueEngine::new();
+    let id = q.enqueue("Original prompt".to_string());
+    assert_eq!(q.last_queued_id(), Some(id));
+    assert_eq!(q.queued_ids(), vec![id]);
+
+    // Update successfully while Queued
+    let res = q.update_prompt(
+        id,
+        "Updated prompt".to_string(),
+        Some("[🖼️ test.png]".to_string()),
+    );
+    assert!(res.is_ok());
+    assert_eq!(q.get(id).unwrap().prompt, "Updated prompt");
+    assert_eq!(
+        q.get(id).unwrap().attachments_summary.as_deref(),
+        Some("[🖼️ test.png]")
+    );
+
+    // Once Submitting, updating is disallowed
+    q.mark_submitting(id, 1000).unwrap();
+    let res2 = q.update_prompt(id, "Illegal update".to_string(), None);
+    assert!(res2.is_err());
+    assert_eq!(q.get(id).unwrap().prompt, "Updated prompt");
+}

@@ -1,3 +1,5 @@
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use harness_queue::cli::{
     format_boxed_header, format_mode_prompt, format_not_detected_guide, read_initial_input,
     read_prompt_input, select_ambiguous_target, InitialChoice,
@@ -6,7 +8,7 @@ use harness_queue::harness::create_harness_adapter;
 use harness_queue::image::{
     describe_attachments, extract_image_references, format_prompt_with_images,
 };
-use harness_queue::models::{AgentTarget, Mode, DEFAULT_CONTINUATION_PROMPT};
+use harness_queue::models::{AgentTarget, ItemStatus, Mode, DEFAULT_CONTINUATION_PROMPT};
 use harness_queue::supervisor::Supervisor;
 use harness_queue::terminal::ghostty::GhosttyAdapter;
 use harness_queue::terminal::herdr::HerdrAdapter;
@@ -14,10 +16,9 @@ use harness_queue::terminal::orca::OrcaAdapter;
 use harness_queue::terminal::{NeighborDetection, TerminalAdapter};
 use harness_queue::tui::run_tui;
 use std::env;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufReader, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
@@ -33,6 +34,28 @@ extern "C" fn sigint_handler(_: i32) {
     } else {
         RUNNING.store(false, Ordering::SeqCst);
     }
+}
+
+struct RawModeGuard;
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+    }
+}
+
+fn render_cli_prompt(out: &mut io::Stdout, editing_id: Option<usize>, buffer: &str, cursor: usize) {
+    let label = if let Some(id) = editing_id {
+        format!("› [EDITING #{}] (Enter: save, Esc: cancel): ", id)
+    } else {
+        "› Next prompt (or image path) [Shift+← to edit]: ".to_string()
+    };
+    let _ = write!(out, "\r\x1b[K{}{}", label, buffer);
+    let cursor_offset = buffer.len().saturating_sub(cursor);
+    if cursor_offset > 0 {
+        let _ = write!(out, "\x1b[{}D", cursor_offset);
+    }
+    let _ = out.flush();
 }
 
 fn detect_terminal_environment() -> Option<Arc<dyn TerminalAdapter>> {
@@ -102,6 +125,9 @@ fn main() {
         println!("  hq --cli [PROMPT]  Launch hq explicitly in CLI mode");
         println!("  hq --tui [PROMPT]  Launch hq in interactive TUI mode");
         println!("  hq --help          Show this help text\n");
+        println!("PROMPT EDITING:");
+        println!("  • Press [Shift + ←] (or click in TUI) to edit any queued prompt.");
+        println!("  • Press [Enter] to save, [Esc] to cancel.\n");
         println!("IMAGE SUPPORT:");
         println!("  Paste image paths (e.g. @/path/to/img.png or /path/to/img.png).");
         println!(
@@ -301,80 +327,271 @@ fn main() {
             );
         }
     }
-    let _ = write!(out, "\n› Next prompt (or image path): ");
     let _ = out.flush();
-
-    // Drop stdout lock so subsequent output doesn't contend
     drop(out);
 
-    // Continuous queue loop: accept prompts infinitely
+    // Continuous queue loop: accept prompts and allow Shift+Left editing
     ATTACHED.store(true, Ordering::SeqCst);
 
-    let (tx, rx) = std::sync::mpsc::channel::<String>();
-    let input_tx = tx.clone();
+    let _raw_guard = RawModeGuard;
+    let _ = enable_raw_mode();
 
-    // Background thread continuously accepts prompts from stdin
-    thread::spawn(move || {
-        let stdin = io::stdin();
-        let mut r = BufReader::new(stdin.lock());
+    let mut stdout = io::stdout();
+    let mut input_buffer = String::new();
+    let mut cursor_idx: usize = 0;
+    let mut cli_editing_id: Option<usize> = None;
+    let mut last_tick = std::time::Instant::now();
 
-        while RUNNING.load(Ordering::SeqCst) {
-            let mut line = String::new();
-            match r.read_line(&mut line) {
-                Ok(0) => break, // EOF
-                Ok(_) => {
-                    let trimmed = line.trim();
-                    if !trimmed.is_empty() && input_tx.send(trimmed.to_string()).is_err() {
+    render_cli_prompt(&mut stdout, None, &input_buffer, cursor_idx);
+
+    while RUNNING.load(Ordering::SeqCst) {
+        if event::poll(Duration::from_millis(50)).unwrap_or(false) {
+            if let Ok(Event::Key(key)) = event::read() {
+                if key.kind == KeyEventKind::Press {
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        && key.code == KeyCode::Char('c')
+                    {
                         break;
                     }
-                }
-                Err(_) => break,
-            }
-        }
-    });
 
-    // Supervisor event loop
-    while RUNNING.load(Ordering::SeqCst) {
-        let mut received_any = false;
-        while let Ok(prompt) = rx.try_recv() {
-            received_any = true;
-            let images = extract_image_references(&prompt);
-            let desc = if !images.is_empty() {
-                let d = describe_attachments(&images);
-                println!("✓ Image attached: {}", d);
-                Some(d)
-            } else {
-                None
-            };
-            let formatted = format_prompt_with_images(&prompt, &images, &target.harness);
-            let id = supervisor.enqueue_prompt_with_attachments(formatted, desc);
-            println!("✓ Prompt #{} queued", id);
-        }
-
-        if received_any {
-            print!("\n› Next prompt (or image path): ");
-            io::stdout().flush().ok();
-        }
-
-        match supervisor.tick() {
-            Ok(events) => {
-                if !events.is_empty() {
-                    for ev in events {
-                        println!("{}", ev);
+                    // Shift + Left: Edit last / cycle previous queued prompt
+                    if key.modifiers.contains(KeyModifiers::SHIFT) && key.code == KeyCode::Left {
+                        let queued = supervisor.queue.queued_ids();
+                        if !queued.is_empty() {
+                            let next_id = match cli_editing_id {
+                                None => queued.last().copied(),
+                                Some(curr) => {
+                                    if let Some(pos) = queued.iter().position(|&x| x == curr) {
+                                        if pos > 0 {
+                                            Some(queued[pos - 1])
+                                        } else {
+                                            queued.last().copied()
+                                        }
+                                    } else {
+                                        queued.last().copied()
+                                    }
+                                }
+                            };
+                            if let Some(id) = next_id {
+                                if let Some(item) = supervisor.queue.get(id) {
+                                    cli_editing_id = Some(id);
+                                    input_buffer = item.prompt.clone();
+                                    cursor_idx = input_buffer.len();
+                                    render_cli_prompt(
+                                        &mut stdout,
+                                        cli_editing_id,
+                                        &input_buffer,
+                                        cursor_idx,
+                                    );
+                                }
+                            }
+                        } else {
+                            let _ = write!(stdout, "\r\x1b[K! No queued prompts to edit\r\n");
+                            render_cli_prompt(
+                                &mut stdout,
+                                cli_editing_id,
+                                &input_buffer,
+                                cursor_idx,
+                            );
+                        }
+                        continue;
                     }
-                    print!("\n› Next prompt (or image path): ");
-                    io::stdout().flush().ok();
+
+                    match key.code {
+                        KeyCode::Enter => {
+                            let trimmed = input_buffer.trim().to_string();
+                            if let Some(edit_id) = cli_editing_id.take() {
+                                if !trimmed.is_empty() {
+                                    let images = extract_image_references(&trimmed);
+                                    let desc = if !images.is_empty() {
+                                        Some(describe_attachments(&images))
+                                    } else {
+                                        None
+                                    };
+                                    let formatted = format_prompt_with_images(
+                                        &trimmed,
+                                        &images,
+                                        &target.harness,
+                                    );
+                                    match supervisor.update_queued_prompt(edit_id, formatted, desc)
+                                    {
+                                        Ok(_) => {
+                                            let _ = write!(
+                                                stdout,
+                                                "\r\x1b[K✓ Prompt #{} updated\r\n\r\n",
+                                                edit_id
+                                            );
+                                        }
+                                        Err(e) => {
+                                            let _ = write!(
+                                                stdout,
+                                                "\r\x1b[K! Failed to update: {}\r\n\r\n",
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                                input_buffer.clear();
+                                cursor_idx = 0;
+                                render_cli_prompt(&mut stdout, None, &input_buffer, cursor_idx);
+                            } else if trimmed == "edit" || trimmed.starts_with("edit ") {
+                                let target_id = if trimmed == "edit" {
+                                    supervisor.queue.last_queued_id()
+                                } else {
+                                    trimmed[5..].trim().parse::<usize>().ok()
+                                };
+                                if let Some(id) = target_id {
+                                    if let Some(item) = supervisor.queue.get(id) {
+                                        if item.status == ItemStatus::Queued {
+                                            cli_editing_id = Some(id);
+                                            input_buffer = item.prompt.clone();
+                                            cursor_idx = input_buffer.len();
+                                            render_cli_prompt(
+                                                &mut stdout,
+                                                cli_editing_id,
+                                                &input_buffer,
+                                                cursor_idx,
+                                            );
+                                            continue;
+                                        }
+                                    }
+                                }
+                                input_buffer.clear();
+                                cursor_idx = 0;
+                                render_cli_prompt(&mut stdout, None, &input_buffer, cursor_idx);
+                            } else if !trimmed.is_empty() {
+                                let images = extract_image_references(&trimmed);
+                                let desc = if !images.is_empty() {
+                                    Some(describe_attachments(&images))
+                                } else {
+                                    None
+                                };
+                                let formatted =
+                                    format_prompt_with_images(&trimmed, &images, &target.harness);
+                                let id = supervisor
+                                    .enqueue_prompt_with_attachments(formatted, desc.clone());
+                                if let Some(d) = desc {
+                                    let _ = write!(stdout, "\r\x1b[K✓ Image attached: {}\r\n", d);
+                                }
+                                let _ = write!(stdout, "\r\x1b[K✓ Prompt #{} queued\r\n\r\n", id);
+                                input_buffer.clear();
+                                cursor_idx = 0;
+                                render_cli_prompt(&mut stdout, None, &input_buffer, cursor_idx);
+                            }
+                        }
+                        KeyCode::Esc => {
+                            if cli_editing_id.is_some() {
+                                cli_editing_id = None;
+                                input_buffer.clear();
+                                cursor_idx = 0;
+                                let _ = write!(stdout, "\r\x1b[K(Edit cancelled)\r\n");
+                                render_cli_prompt(&mut stdout, None, &input_buffer, cursor_idx);
+                            } else {
+                                break;
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            input_buffer.insert(cursor_idx, c);
+                            cursor_idx += 1;
+                            render_cli_prompt(
+                                &mut stdout,
+                                cli_editing_id,
+                                &input_buffer,
+                                cursor_idx,
+                            );
+                        }
+                        KeyCode::Backspace => {
+                            if cursor_idx > 0 {
+                                cursor_idx -= 1;
+                                input_buffer.remove(cursor_idx);
+                                render_cli_prompt(
+                                    &mut stdout,
+                                    cli_editing_id,
+                                    &input_buffer,
+                                    cursor_idx,
+                                );
+                            }
+                        }
+                        KeyCode::Delete => {
+                            if cursor_idx < input_buffer.len() {
+                                input_buffer.remove(cursor_idx);
+                                render_cli_prompt(
+                                    &mut stdout,
+                                    cli_editing_id,
+                                    &input_buffer,
+                                    cursor_idx,
+                                );
+                            }
+                        }
+                        KeyCode::Left => {
+                            if cursor_idx > 0 {
+                                cursor_idx -= 1;
+                                render_cli_prompt(
+                                    &mut stdout,
+                                    cli_editing_id,
+                                    &input_buffer,
+                                    cursor_idx,
+                                );
+                            }
+                        }
+                        KeyCode::Right => {
+                            if cursor_idx < input_buffer.len() {
+                                cursor_idx += 1;
+                                render_cli_prompt(
+                                    &mut stdout,
+                                    cli_editing_id,
+                                    &input_buffer,
+                                    cursor_idx,
+                                );
+                            }
+                        }
+                        KeyCode::Home => {
+                            cursor_idx = 0;
+                            render_cli_prompt(
+                                &mut stdout,
+                                cli_editing_id,
+                                &input_buffer,
+                                cursor_idx,
+                            );
+                        }
+                        KeyCode::End => {
+                            cursor_idx = input_buffer.len();
+                            render_cli_prompt(
+                                &mut stdout,
+                                cli_editing_id,
+                                &input_buffer,
+                                cursor_idx,
+                            );
+                        }
+                        _ => {}
+                    }
                 }
-            }
-            Err(e) => {
-                println!("\n! Supervisor halted: {}", e);
-                break;
             }
         }
 
-        thread::sleep(Duration::from_millis(500));
+        // Supervisor tick every 500ms
+        if last_tick.elapsed() >= Duration::from_millis(500) {
+            last_tick = std::time::Instant::now();
+            match supervisor.tick() {
+                Ok(events) => {
+                    if !events.is_empty() {
+                        let _ = write!(stdout, "\r\x1b[K");
+                        for ev in events {
+                            let _ = write!(stdout, "{}\r\n", ev);
+                        }
+                        let _ = write!(stdout, "\r\n");
+                        render_cli_prompt(&mut stdout, cli_editing_id, &input_buffer, cursor_idx);
+                    }
+                }
+                Err(e) => {
+                    let _ = write!(stdout, "\r\x1b[K! Supervisor halted: {}\r\n", e);
+                    break;
+                }
+            }
+        }
     }
 
+    drop(_raw_guard);
     let _ = supervisor
         .state_machine
         .transition(harness_queue::models::State::Detached);

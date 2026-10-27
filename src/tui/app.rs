@@ -2,13 +2,16 @@ use crate::image::{describe_attachments, extract_image_references, format_prompt
 use crate::models::{ItemStatus, State};
 use crate::supervisor::Supervisor;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+        MouseButton, MouseEvent, MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
@@ -24,6 +27,8 @@ pub struct TuiApp<'a> {
     pub logs: Vec<String>,
     pub running: bool,
     pub last_tick: Instant,
+    pub editing_item_id: Option<usize>,
+    pub queue_rect: Rect,
 }
 
 impl<'a> TuiApp<'a> {
@@ -35,6 +40,8 @@ impl<'a> TuiApp<'a> {
             logs: Vec::new(),
             running: true,
             last_tick: Instant::now(),
+            editing_item_id: None,
+            queue_rect: Rect::default(),
         };
 
         let now_str = current_time_str();
@@ -58,6 +65,60 @@ impl<'a> TuiApp<'a> {
         self.logs.push(format!("{} {}", timestamp, msg));
     }
 
+    pub fn start_editing(&mut self, id: usize) {
+        if let Some(item) = self.supervisor.queue.get(id) {
+            if item.status == ItemStatus::Queued {
+                self.editing_item_id = Some(id);
+                self.input = item.prompt.clone();
+                self.cursor_position = self.input.len();
+                self.add_log(format!(
+                    "✎ Editing prompt #{} (Press Enter to save, Esc to cancel)",
+                    id
+                ));
+            } else {
+                self.add_log(format!(
+                    "! Cannot edit prompt #{} (already {:?})",
+                    id, item.status
+                ));
+            }
+        }
+    }
+
+    pub fn cancel_editing(&mut self) {
+        if let Some(id) = self.editing_item_id.take() {
+            self.input.clear();
+            self.cursor_position = 0;
+            self.add_log(format!("Cancelled edit for prompt #{}", id));
+        }
+    }
+
+    pub fn edit_previous_queued_item(&mut self) {
+        let queued = self.supervisor.queue.queued_ids();
+        if queued.is_empty() {
+            self.add_log("No queued prompts to edit".to_string());
+            return;
+        }
+
+        let next_to_edit = match self.editing_item_id {
+            None => queued.last().copied(),
+            Some(current_id) => {
+                if let Some(idx) = queued.iter().position(|&id| id == current_id) {
+                    if idx > 0 {
+                        Some(queued[idx - 1])
+                    } else {
+                        queued.last().copied() // Wrap around
+                    }
+                } else {
+                    queued.last().copied()
+                }
+            }
+        };
+
+        if let Some(id) = next_to_edit {
+            self.start_editing(id);
+        }
+    }
+
     pub fn submit_input(&mut self) {
         let trimmed = self.input.trim().to_string();
         if trimmed.is_empty() {
@@ -79,14 +140,35 @@ impl<'a> TuiApp<'a> {
         };
 
         let formatted = format_prompt_with_images(&trimmed, &images, &harness);
-        let id = self
-            .supervisor
-            .enqueue_prompt_with_attachments(formatted, attachments_desc.clone());
 
-        if let Some(desc) = attachments_desc {
-            self.add_log(format!("✓ Prompt #{} queued {}", id, desc));
+        if let Some(edit_id) = self.editing_item_id.take() {
+            // Update existing queued prompt
+            match self
+                .supervisor
+                .update_queued_prompt(edit_id, formatted, attachments_desc.clone())
+            {
+                Ok(_) => {
+                    if let Some(desc) = attachments_desc {
+                        self.add_log(format!("✓ Prompt #{} updated {}", edit_id, desc));
+                    } else {
+                        self.add_log(format!("✓ Prompt #{} updated", edit_id));
+                    }
+                }
+                Err(e) => {
+                    self.add_log(format!("! Failed to update prompt #{}: {}", edit_id, e));
+                }
+            }
         } else {
-            self.add_log(format!("✓ Prompt #{} queued", id));
+            // Enqueue new prompt
+            let id = self
+                .supervisor
+                .enqueue_prompt_with_attachments(formatted, attachments_desc.clone());
+
+            if let Some(desc) = attachments_desc {
+                self.add_log(format!("✓ Prompt #{} queued {}", id, desc));
+            } else {
+                self.add_log(format!("✓ Prompt #{} queued", id));
+            }
         }
 
         self.input.clear();
@@ -105,9 +187,19 @@ impl<'a> TuiApp<'a> {
             return;
         }
 
+        // Shift + Left Arrow: Edit last/previous queued prompt
+        if key_event.modifiers.contains(KeyModifiers::SHIFT) && key_event.code == KeyCode::Left {
+            self.edit_previous_queued_item();
+            return;
+        }
+
         match key_event.code {
             KeyCode::Esc => {
-                self.running = false;
+                if self.editing_item_id.is_some() {
+                    self.cancel_editing();
+                } else {
+                    self.running = false;
+                }
             }
             KeyCode::Enter => {
                 self.submit_input();
@@ -147,6 +239,42 @@ impl<'a> TuiApp<'a> {
         }
     }
 
+    pub fn handle_mouse(&mut self, mouse: MouseEvent) {
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            let col = mouse.column;
+            let row = mouse.row;
+
+            // Check if click was inside queue block (excluding borders)
+            if col > self.queue_rect.x
+                && col < self.queue_rect.x + self.queue_rect.width.saturating_sub(1)
+                && row > self.queue_rect.y
+                && row < self.queue_rect.y + self.queue_rect.height.saturating_sub(1)
+            {
+                let relative_row = (row - self.queue_rect.y - 1) as usize;
+                let mut current_row = 0;
+                for item in self.supervisor.queue.all_items() {
+                    let item_height = if item.attachments_summary.is_some() {
+                        2
+                    } else {
+                        1
+                    };
+                    if relative_row >= current_row && relative_row < current_row + item_height {
+                        if item.status == ItemStatus::Queued {
+                            self.start_editing(item.id);
+                        } else {
+                            self.add_log(format!(
+                                "! Cannot edit prompt #{} (status: {:?})",
+                                item.id, item.status
+                            ));
+                        }
+                        return;
+                    }
+                    current_row += item_height;
+                }
+            }
+        }
+    }
+
     pub fn tick_supervisor(&mut self) {
         match self.supervisor.tick() {
             Ok(events) => {
@@ -176,15 +304,15 @@ struct TerminalCleanup;
 
 impl Drop for TerminalCleanup {
     fn drop(&mut self) {
+        let _ = execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture);
         let _ = disable_raw_mode();
-        let _ = execute!(stdout(), LeaveAlternateScreen);
     }
 }
 
 pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
     enable_raw_mode()?;
     let mut stdout = stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -333,6 +461,9 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
                 .split(chunks[1]);
 
+            // Track queue panel coordinates for mouse click detection
+            app.queue_rect = middle_chunks[0];
+
             // Queue List
             let all_items = app.supervisor.queue.all_items();
             let queue_title = format!(" Prompt Queue ({}) ", all_items.len());
@@ -345,18 +476,28 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
                 all_items
                     .iter()
                     .map(|item| {
-                        let (status_badge, status_style) = match item.status {
-                            ItemStatus::Queued => {
-                                ("[⏳ QUEUED]", Style::default().fg(Color::Yellow))
-                            }
-                            ItemStatus::Submitting => {
-                                ("[➤ SENDING]", Style::default().fg(Color::Magenta))
-                            }
-                            ItemStatus::Acknowledged => {
-                                ("[✓ SENT]", Style::default().fg(Color::Green))
-                            }
-                            ItemStatus::Uncertain => {
-                                ("[✕ PAUSED]", Style::default().fg(Color::Red))
+                        let is_editing = app.editing_item_id == Some(item.id);
+                        let (status_badge, status_style) = if is_editing {
+                            (
+                                "[✎ EDITING]",
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            )
+                        } else {
+                            match item.status {
+                                ItemStatus::Queued => {
+                                    ("[⏳ QUEUED]", Style::default().fg(Color::Yellow))
+                                }
+                                ItemStatus::Submitting => {
+                                    ("[➤ SENDING]", Style::default().fg(Color::Magenta))
+                                }
+                                ItemStatus::Acknowledged => {
+                                    ("[✓ SENT]", Style::default().fg(Color::Green))
+                                }
+                                ItemStatus::Uncertain => {
+                                    ("[✕ PAUSED]", Style::default().fg(Color::Red))
+                                }
                             }
                         };
 
@@ -383,10 +524,16 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
                     .collect()
             };
 
+            let queue_border_style = if app.editing_item_id.is_some() {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+
             let queue_block = Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::DarkGray))
+                .border_style(queue_border_style)
                 .title(Span::styled(
                     queue_title,
                     Style::default()
@@ -416,6 +563,8 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
                         Style::default().fg(Color::Yellow)
                     } else if log_str.contains('!') {
                         Style::default().fg(Color::Red)
+                    } else if log_str.contains('✎') {
+                        Style::default().fg(Color::Cyan)
                     } else {
                         Style::default().fg(Color::Gray)
                     };
@@ -437,7 +586,21 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
             f.render_widget(log_widget, middle_chunks[1]);
 
             // 3. Input Box
-            let input_title = " › Add prompt or paste image path (Enter to queue) ";
+            let (input_title, border_color) = if let Some(id) = app.editing_item_id {
+                (
+                    format!(
+                        " › [EDITING PROMPT #{}] (Enter to save, Esc to cancel) ",
+                        id
+                    ),
+                    Color::Yellow,
+                )
+            } else {
+                (
+                    " › Add prompt or paste image path (Enter to queue) ".to_string(),
+                    Color::Cyan,
+                )
+            };
+
             let input_text = if app.input.is_empty() {
                 Span::styled(
                     "Type prompt or paste @/path/to/img.png here...",
@@ -450,11 +613,11 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
             let input_block = Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Cyan))
+                .border_style(Style::default().fg(border_color))
                 .title(Span::styled(
                     input_title,
                     Style::default()
-                        .fg(Color::Cyan)
+                        .fg(border_color)
                         .add_modifier(Modifier::BOLD),
                 ));
             let input_widget = Paragraph::new(Line::from(input_text)).block(input_block);
@@ -466,37 +629,76 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
             f.set_cursor_position((cursor_x, cursor_y));
 
             // 4. Footer
-            let footer_text = vec![
-                Span::styled(
-                    " [Enter] ",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("Queue prompt  • "),
-                Span::styled(
-                    " [Esc] ",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("or "),
-                Span::styled(
-                    " [Ctrl+C] ",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("Detach cleanly"),
-            ];
+            let footer_text = if app.editing_item_id.is_some() {
+                vec![
+                    Span::styled(
+                        " [Enter] ",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("Save update  • "),
+                    Span::styled(
+                        " [Esc] ",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("Cancel edit  • "),
+                    Span::styled(
+                        " [Ctrl+C] ",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("Detach cleanly"),
+                ]
+            } else {
+                vec![
+                    Span::styled(
+                        " [Enter] ",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("Queue prompt  • "),
+                    Span::styled(
+                        " [Shift+←] ",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("or "),
+                    Span::styled(
+                        "Click queue item ",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("to edit  • "),
+                    Span::styled(
+                        " [Esc] ",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("Detach"),
+                ]
+            };
             let footer_paragraph = Paragraph::new(Line::from(footer_text));
             f.render_widget(footer_paragraph, chunks[3]);
         })?;
 
-        // Handle events with 100ms timeout
+        // Handle keyboard and mouse events with 100ms timeout
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                app.handle_key(key);
+            match event::read()? {
+                Event::Key(key) => {
+                    app.handle_key(key);
+                }
+                Event::Mouse(mouse) => {
+                    app.handle_mouse(mouse);
+                }
+                _ => {}
             }
         }
 

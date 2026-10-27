@@ -86,6 +86,17 @@ impl Supervisor {
             .enqueue_with_attachments(prompt, attachments_summary)
     }
 
+    pub fn update_queued_prompt(
+        &mut self,
+        id: usize,
+        new_prompt: String,
+        new_attachments: Option<String>,
+    ) -> Result<(), String> {
+        self.queue
+            .update_prompt(id, new_prompt, new_attachments)
+            .map_err(|e| e.to_string())
+    }
+
     pub fn tick(&mut self) -> Result<Vec<String>, String> {
         let target = match &self.target {
             Some(t) => t.clone(),
