@@ -48,6 +48,49 @@ Minimal, universal, terminal-based agent queue that works alongside existing cod
 
 ---
 
+## Installation
+
+Choose any method to install or run `hq` in your terminal:
+
+### 1. Homebrew (macOS)
+```bash
+brew install --build-from-source https://raw.githubusercontent.com/Rome-NotBeepBoop/harness-queue/main/Formula/hq.rb
+```
+
+### 2. One-Line Script (curl)
+```bash
+curl -fsSL https://raw.githubusercontent.com/Rome-NotBeepBoop/harness-queue/main/install.sh | bash
+```
+
+### 3. Cargo Install (Rust)
+```bash
+cargo install --git https://github.com/Rome-NotBeepBoop/harness-queue.git
+```
+
+### 4. Via Justfile (`just install` / `just compile`)
+```bash
+git clone https://github.com/Rome-NotBeepBoop/harness-queue.git
+cd harness-queue
+
+# Install globally to ~/.local/bin and ~/.cargo/bin:
+just install
+
+# Or compile the standalone binary to target/release/hq:
+just compile
+```
+
+### 5. Zero-Install Instant Run
+If you have `just` installed, you don't even need to install `hq`:
+```bash
+# Run CLI mode directly
+just
+
+# Run interactive TUI mode directly
+just tui
+```
+
+---
+
 ## Usage Modes
 
 ### 1. Default CLI Mode (`hq` or `hq --cli`)
@@ -127,6 +170,15 @@ just
 
 # Launch hq in interactive TUI mode
 just tui
+
+# Compile release binary to target/release/hq
+just compile
+
+# Install hq globally to ~/.local/bin and ~/.cargo/bin
+just install
+
+# Uninstall hq
+just uninstall
 
 # Run with an initial prompt
 just run "Check tests and summarize"

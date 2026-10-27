@@ -58,9 +58,28 @@ check:
 fmt:
     cargo fmt --all
 
-# Build release binary (when ready for distribution)
+# Compile release binary to target/release/hq
+compile:
+    cargo build --release
+
+# Build release binary (alias for compile)
 build:
     cargo build --release
+
+# Install hq to ~/.local/bin and ~/.cargo/bin
+install:
+    cargo build --release
+    @mkdir -p ~/.local/bin
+    @cp -f target/release/hq ~/.local/bin/hq
+    @cargo install --path . --force
+    @echo "✓ Successfully installed 'hq'!"
+    @echo "  Run 'hq' or 'hq --tui' in any terminal."
+
+# Uninstall hq binary
+uninstall:
+    @cargo uninstall harness-queue 2>/dev/null || true
+    @rm -f ~/.local/bin/hq
+    @echo "✓ Successfully uninstalled 'hq'."
 
 # Clean build artifacts
 clean:
