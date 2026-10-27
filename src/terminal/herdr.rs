@@ -176,10 +176,15 @@ impl TerminalAdapter for HerdrAdapter {
             ));
         }
 
+        let caller_cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let mut targets = Vec::new();
         for n_id in found_neighbors {
             if let Ok(Some(target)) = self.detect_agent_in_pane(&n_id) {
-                targets.push(target);
+                // Must be in the exact same folder
+                let target_path = std::path::Path::new(&target.cwd);
+                if target.cwd.is_empty() || crate::terminal::orca::is_same_or_subfolder(&caller_cwd, target_path) {
+                    targets.push(target);
+                }
             }
         }
 
@@ -188,9 +193,10 @@ impl TerminalAdapter for HerdrAdapter {
         } else if targets.len() > 1 {
             Ok(NeighborDetection::Ambiguous(targets))
         } else {
-            Ok(NeighborDetection::NoneFound(
-                "Adjacent pane does not contain a recognized agent".to_string(),
-            ))
+            Ok(NeighborDetection::NoneFound(format!(
+                "Adjacent pane does not contain a recognized agent in the same folder ({})",
+                caller_cwd.display()
+            )))
         }
     }
 

@@ -1,3 +1,4 @@
+pub mod ghostty;
 pub mod herdr;
 pub mod mock;
 pub mod orca;

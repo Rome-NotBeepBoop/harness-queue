@@ -29,6 +29,10 @@ test-scenarios:
 test-orca:
     cargo test --test test_orca_adapter
 
+# Run Ghostty integration tests
+test-ghostty:
+    cargo test --test test_ghostty_adapter
+
 # Run Herdr integration tests
 test-herdr:
     cargo test --test test_herdr_adapter

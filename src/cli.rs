@@ -81,12 +81,16 @@ hq operates alongside coding agents in a split terminal pane.
 
 To use hq:
   • Orca IDE:
-    Open a terminal pane next to your agent (Codex, Claude, etc.)
-    and run `hq`. Orca's terminal API is detected automatically.
+    Open a terminal split pane (⌘D) next to your agent in the same
+    folder and run `just` (or `hq`).
 
   • Herdr:
-    Open an adjacent pane next to your agent in Herdr and run `hq`.
-    Herdr CLI and socket IPC are detected automatically.
+    Open an adjacent pane next to your agent in the same folder
+    and run `just` (or `hq`).
+
+  • Ghostty:
+    Open a split pane (⌘D) next to your agent in the same folder
+    and run `just` (or `hq`).
 
 Supported agents:
   Codex, Claude Code, OpenCode, OMP, Pi, Google Antigravity (AGY)

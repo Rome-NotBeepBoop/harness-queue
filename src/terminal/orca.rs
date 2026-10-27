@@ -82,6 +82,12 @@ pub fn infer_orca_harness(entry: &OrcaTerminalEntry) -> HarnessKind {
     HerdrAdapter::infer_harness(&combined)
 }
 
+pub fn is_same_or_subfolder(path_a: &std::path::Path, path_b: &std::path::Path) -> bool {
+    let canon_a = path_a.canonicalize().unwrap_or_else(|_| path_a.to_path_buf());
+    let canon_b = path_b.canonicalize().unwrap_or_else(|_| path_b.to_path_buf());
+    canon_a == canon_b || canon_a.starts_with(&canon_b) || canon_b.starts_with(&canon_a)
+}
+
 fn is_agent_title(title: &str) -> bool {
     let lower = title.to_lowercase();
     lower.contains("codex")
@@ -96,103 +102,106 @@ fn is_agent_title(title: &str) -> bool {
 pub fn find_orca_neighbor(
     caller_handle: &str,
     caller_tab: Option<&str>,
+    caller_cwd: &std::path::Path,
     terminals: &[OrcaTerminalEntry],
 ) -> NeighborDetection {
-    let others: Vec<&OrcaTerminalEntry> = terminals
-        .iter()
-        .filter(|t| t.handle != caller_handle && t.connected && !t.orphaned)
-        .collect();
-
-    if others.is_empty() {
-        return NeighborDetection::NoneFound("No other active terminal found in Orca".to_string());
-    }
-
-    // 1. Prioritize terminals in the exact same tab (split pane)
-    if let Some(tab) = caller_tab {
-        let same_tab: Vec<&OrcaTerminalEntry> = others.iter().filter(|t| t.tab_id == tab).copied().collect();
-        if same_tab.len() == 1 {
-            let entry = same_tab[0];
-            return NeighborDetection::Exact(AgentTarget {
-                terminal_id: entry.handle.clone(),
-                pane_id: entry.handle.clone(),
-                pid: 0,
-                harness: infer_orca_harness(entry),
-                session_id: entry.handle.clone(),
-                cwd: entry.worktree_path.clone(),
-            });
-        } else if same_tab.len() > 1 {
-            let agent_entries: Vec<&OrcaTerminalEntry> = same_tab
+    // 1. Identify the caller's tab
+    let resolved_tab = caller_tab
+        .map(|s| s.to_string())
+        .or_else(|| {
+            terminals
                 .iter()
-                .filter(|t| t.agent_identity.is_some() || is_agent_title(&t.title))
-                .copied()
-                .collect();
+                .find(|t| t.handle == caller_handle)
+                .map(|t| t.tab_id.clone())
+        });
 
-            if agent_entries.len() == 1 {
-                let entry = agent_entries[0];
-                return NeighborDetection::Exact(AgentTarget {
-                    terminal_id: entry.handle.clone(),
-                    pane_id: entry.handle.clone(),
-                    pid: 0,
-                    harness: infer_orca_harness(entry),
-                    session_id: entry.handle.clone(),
-                    cwd: entry.worktree_path.clone(),
-                });
-            }
-
-            let candidates = if !agent_entries.is_empty() {
-                agent_entries
-            } else {
-                same_tab
-            };
-
-            let targets = candidates
-                .into_iter()
-                .map(|e| AgentTarget {
-                    terminal_id: e.handle.clone(),
-                    pane_id: e.handle.clone(),
-                    pid: 0,
-                    harness: infer_orca_harness(e),
-                    session_id: e.handle.clone(),
-                    cwd: e.worktree_path.clone(),
-                })
-                .collect();
-            return NeighborDetection::Ambiguous(targets);
+    let tab = match resolved_tab {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            return NeighborDetection::NoneFound(
+                "Caller terminal tab could not be identified".to_string(),
+            );
         }
-    }
+    };
 
-    // 2. If none in the same tab, check across active agents in other tabs
-    let agent_terminals: Vec<&OrcaTerminalEntry> = others
+    // 2. Filter strictly:
+    //    - NOT the caller itself
+    //    - connected and not orphaned
+    //    - MUST be in the EXACT SAME tab/split-pane (t.tab_id == tab)
+    //    - MUST be in the EXACT SAME folder (worktree_path matches caller_cwd)
+    let candidates: Vec<&OrcaTerminalEntry> = terminals
         .iter()
-        .filter(|t| t.agent_identity.is_some() || is_agent_title(&t.title))
-        .copied()
+        .filter(|t| {
+            if t.handle == caller_handle || !t.connected || t.orphaned {
+                return false;
+            }
+            if t.tab_id != tab {
+                return false;
+            }
+            if t.worktree_path.is_empty() {
+                return false;
+            }
+            is_same_or_subfolder(std::path::Path::new(&t.worktree_path), caller_cwd)
+        })
         .collect();
 
-    if agent_terminals.len() == 1 {
-        let entry = agent_terminals[0];
-        NeighborDetection::Exact(AgentTarget {
+    if candidates.is_empty() {
+        return NeighborDetection::NoneFound(format!(
+            "No adjacent agent found in the current split pane and folder ({}). Open a split pane next to your agent to attach.",
+            caller_cwd.display()
+        ));
+    }
+
+    if candidates.len() == 1 {
+        let entry = candidates[0];
+        return NeighborDetection::Exact(AgentTarget {
             terminal_id: entry.handle.clone(),
             pane_id: entry.handle.clone(),
             pid: 0,
             harness: infer_orca_harness(entry),
             session_id: entry.handle.clone(),
             cwd: entry.worktree_path.clone(),
-        })
-    } else if !agent_terminals.is_empty() {
-        let targets = agent_terminals
-            .into_iter()
-            .map(|e| AgentTarget {
-                terminal_id: e.handle.clone(),
-                pane_id: e.handle.clone(),
-                pid: 0,
-                harness: infer_orca_harness(e),
-                session_id: e.handle.clone(),
-                cwd: e.worktree_path.clone(),
-            })
-            .collect();
-        NeighborDetection::Ambiguous(targets)
-    } else {
-        NeighborDetection::NoneFound("No recognized agent terminal found in Orca workspace".to_string())
+        });
     }
+
+    // If multiple split panes exist in the same tab and same folder:
+    let agent_entries: Vec<&OrcaTerminalEntry> = candidates
+        .iter()
+        .filter(|t| t.agent_identity.is_some() || is_agent_title(&t.title))
+        .copied()
+        .collect();
+
+    if agent_entries.len() == 1 {
+        let entry = agent_entries[0];
+        return NeighborDetection::Exact(AgentTarget {
+            terminal_id: entry.handle.clone(),
+            pane_id: entry.handle.clone(),
+            pid: 0,
+            harness: infer_orca_harness(entry),
+            session_id: entry.handle.clone(),
+            cwd: entry.worktree_path.clone(),
+        });
+    }
+
+    let target_list = if !agent_entries.is_empty() {
+        agent_entries
+    } else {
+        candidates
+    };
+
+    let targets = target_list
+        .into_iter()
+        .map(|e| AgentTarget {
+            terminal_id: e.handle.clone(),
+            pane_id: e.handle.clone(),
+            pid: 0,
+            harness: infer_orca_harness(e),
+            session_id: e.handle.clone(),
+            cwd: e.worktree_path.clone(),
+        })
+        .collect();
+
+    NeighborDetection::Ambiguous(targets)
 }
 
 pub struct OrcaAdapter {
@@ -283,7 +292,8 @@ impl TerminalAdapter for OrcaAdapter {
     fn find_adjacent_agent(&self, current_pane: &str) -> Result<NeighborDetection, TerminalError> {
         let terminals = self.list_terminals()?;
         let caller_tab = std::env::var("ORCA_TAB_ID").ok();
-        Ok(find_orca_neighbor(current_pane, caller_tab.as_deref(), &terminals))
+        let caller_cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        Ok(find_orca_neighbor(current_pane, caller_tab.as_deref(), &caller_cwd, &terminals))
     }
 
     fn get_agent_status(&self, pane_id: &str) -> Result<AgentStatus, TerminalError> {

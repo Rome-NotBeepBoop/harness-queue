@@ -5,6 +5,7 @@ use harness_queue::cli::{
 use harness_queue::harness::create_harness_adapter;
 use harness_queue::models::{AgentTarget, Mode, DEFAULT_CONTINUATION_PROMPT};
 use harness_queue::supervisor::Supervisor;
+use harness_queue::terminal::ghostty::GhosttyAdapter;
 use harness_queue::terminal::herdr::HerdrAdapter;
 use harness_queue::terminal::orca::OrcaAdapter;
 use harness_queue::terminal::{NeighborDetection, TerminalAdapter};
@@ -28,6 +29,7 @@ extern "C" fn sigint_handler(_: i32) {
 fn detect_terminal_environment() -> Option<Arc<dyn TerminalAdapter>> {
     let orca = Arc::new(OrcaAdapter::new());
     let herdr = Arc::new(HerdrAdapter::new());
+    let ghostty = Arc::new(GhosttyAdapter::new());
 
     let in_orca_env = env::var("TERM_PROGRAM").map(|v| v == "Orca").unwrap_or(false)
         || env::var("ORCA_TERMINAL_HANDLE").map(|v| !v.trim().is_empty()).unwrap_or(false);
@@ -35,6 +37,9 @@ fn detect_terminal_environment() -> Option<Arc<dyn TerminalAdapter>> {
     let in_herdr_env = env::var("HERDR_PANE_ID").map(|v| !v.trim().is_empty()).unwrap_or(false)
         || env::var("HERDR_SOCKET").map(|v| !v.trim().is_empty()).unwrap_or(false)
         || env::var("HERDR_ENV").map(|v| v == "1").unwrap_or(false);
+
+    let in_ghostty_env = env::var("TERM_PROGRAM").map(|v| v == "ghostty").unwrap_or(false)
+        || env::var("GHOSTTY_RESOURCES_DIR").map(|v| !v.trim().is_empty()).unwrap_or(false);
 
     if in_orca_env && orca.is_available() {
         return Some(orca);
@@ -44,12 +49,20 @@ fn detect_terminal_environment() -> Option<Arc<dyn TerminalAdapter>> {
         return Some(herdr);
     }
 
+    if in_ghostty_env && ghostty.is_available() {
+        return Some(ghostty);
+    }
+
     if orca.detect_current_pane().is_ok() {
         return Some(orca);
     }
 
     if herdr.detect_current_pane().is_ok() {
         return Some(herdr);
+    }
+
+    if ghostty.detect_current_pane().is_ok() {
+        return Some(ghostty);
     }
 
     None
@@ -68,7 +81,8 @@ fn main() {
         println!("  hq --help          Show this help text\n");
         println!("ENVIRONMENTS:");
         println!("  • Orca IDE         Native terminal API & split panes");
-        println!("  • Herdr            Terminal pane manager & agent IPC\n");
+        println!("  • Herdr            Terminal pane manager & agent IPC");
+        println!("  • Ghostty          macOS terminal emulator & split panes\n");
         println!("SUPPORTED AGENTS:");
         println!("  Codex, Claude Code, OpenCode, OMP, Pi, Google Antigravity (AGY)");
         return;
