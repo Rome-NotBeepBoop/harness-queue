@@ -57,22 +57,52 @@ HQ is designed to feel like a tiny, unobtrusive addition to your existing termin
 
 ---
 
-## Installation & Build
+## Running with Just (Recommended)
 
-### Pre-requisites
-- Rust 1.80+ (`cargo`)
-
-### Build Release Binary
+You don't need to manually build or install any binary. Use [`just`](https://github.com/casey/just) to run `hq` directly:
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/harness-queue.git
-cd harness-queue
+# Launch hq in the current terminal pane
+just
 
+# Or run with a prompt directly
+just run "Finish the receiving workspace and run tests"
+
+# Run in release mode
+just run-release
+
+# Run the test suite
+just test
+
+# See all available commands
+just help
+```
+
+### Available `just` commands:
+- `just` / `just run [prompt]`: Run `hq` directly in quiet debug mode without binary installation
+- `just run-release [prompt]`: Run `hq` directly in optimized release mode
+- `just test`: Run the full 48-test test suite
+- `just test-scenarios`: Run all 20 end-to-end integration scenarios
+- `just test-orca`: Run Orca IDE integration tests
+- `just test-herdr`: Run Herdr integration tests
+- `just test-cli`: Run CLI UX formatting & interaction tests
+- `just test-codex`: Run Codex JSON-RPC quota tests
+- `just check`: Run type check and clippy lints
+- `just fmt`: Format source code with rustfmt
+- `just build`: Build optimized standalone release executable in `target/release/hq`
+- `just clean`: Clean build cache
+
+---
+
+## Standalone Binary Build (Optional)
+
+When you want a standalone portable binary:
+
+```bash
 # Compile optimized release executable
-cargo build --release
+just build
 
-# Install to ~/.local/bin or /usr/local/bin
+# Optional: install to ~/.local/bin
 cp target/release/hq ~/.local/bin/
 ```
 
@@ -86,7 +116,8 @@ cp target/release/hq ~/.local/bin/
 2. In one terminal pane, launch your coding agent (e.g. `codex`).
 3. Split the terminal pane (`⌘D` or split button) and run:
    ```bash
-   hq
+   just
+   # (or `just run`, or `hq` if installed)
    ```
 4. HQ automatically detects Orca IDE and pairs with your adjacent agent:
    - Hit **`[Enter]`** to auto-resume with the continuation prompt.
@@ -101,7 +132,8 @@ cp target/release/hq ~/.local/bin/
 2. In the right pane, launch your agent normally (e.g. `codex`).
 3. In the left pane, run:
    ```bash
-   hq
+   just
+   # (or `just run`, or `hq` if installed)
    ```
 
 ### Power-User Command-Line Launch
@@ -109,7 +141,8 @@ cp target/release/hq ~/.local/bin/
 You can supply your prompt directly on the command line to start queueing instantly:
 
 ```bash
-hq "Implement receiving webhook handler and run unit tests"
+just run "Implement receiving webhook handler and run unit tests"
+# (or `hq "..."` if installed)
 ```
 
 ---
