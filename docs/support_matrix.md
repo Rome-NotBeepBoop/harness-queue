@@ -6,9 +6,9 @@ Harness Queue (`hq`) supports progressive compatibility across terminal multiple
 
 | Terminal | Compatibility | Neighbor Discovery | Input Mechanism | Status Detection | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Herdr** | **Full** | Native (`herdr pane neighbor`, `layout`) | Native (`herdr agent prompt`, `pane send-text`) | Native (`herdr agent get`, `process-info`) | Primary supported terminal environment. Supports directional neighbor discovery and socket state. |
-| **Ghostty (macOS)** | **Deferred** | - | - | - | Temporarily deferred per product direction; focus is Herdr-only. |
-| **Mock** | **Full** | Simulated topology | In-memory atomic queue | State simulation | Used by automated test suite. |
+| **Orca IDE** | **Full** | Native CLI (`orca terminal list --json`), same-tab split prioritization | Native IPC (`orca terminal send --enter --json`) | Native (`preview`, `connected`, `writable`) | First-class IDE terminal support. Auto-detects same-tab splits and active agent identity. |
+| **Herdr** | **Full** | Native (`herdr pane neighbor`, `layout`) | Native (`herdr agent prompt`, `pane send-text`) | Native (`herdr agent get`, `process-info`) | Directional neighbor discovery (right, left, down, up) and agent IPC. |
+| **Mock** | **Full** | Simulated topology | In-memory atomic queue | State simulation | Used by automated test suite for headless verification. |
 
 ## Harness Adapters
 

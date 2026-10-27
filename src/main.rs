@@ -1,12 +1,14 @@
 use harness_queue::cli::{
-    format_agent_detection, format_mode_selection_menu, read_mode_selection, read_prompt_event,
-    read_prompt_input, InputEvent,
+    format_boxed_header, format_mode_prompt, format_not_detected_guide, read_initial_input,
+    read_prompt_event, read_prompt_input, select_ambiguous_target, InputEvent,
 };
 use harness_queue::harness::create_harness_adapter;
-use harness_queue::models::Mode;
+use harness_queue::models::{AgentTarget, Mode, DEFAULT_CONTINUATION_PROMPT};
 use harness_queue::supervisor::Supervisor;
 use harness_queue::terminal::herdr::HerdrAdapter;
-use harness_queue::terminal::TerminalAdapter;
+use harness_queue::terminal::orca::OrcaAdapter;
+use harness_queue::terminal::{NeighborDetection, TerminalAdapter};
+use std::env;
 use std::io::{self, BufReader, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -23,49 +25,103 @@ extern "C" fn sigint_handler(_: i32) {
     RUNNING.store(false, Ordering::SeqCst);
 }
 
+fn detect_terminal_environment() -> Option<Arc<dyn TerminalAdapter>> {
+    let orca = Arc::new(OrcaAdapter::new());
+    let herdr = Arc::new(HerdrAdapter::new());
+
+    let in_orca_env = env::var("TERM_PROGRAM").map(|v| v == "Orca").unwrap_or(false)
+        || env::var("ORCA_TERMINAL_HANDLE").map(|v| !v.trim().is_empty()).unwrap_or(false);
+
+    let in_herdr_env = env::var("HERDR_PANE_ID").map(|v| !v.trim().is_empty()).unwrap_or(false)
+        || env::var("HERDR_SOCKET").map(|v| !v.trim().is_empty()).unwrap_or(false)
+        || env::var("HERDR_ENV").map(|v| v == "1").unwrap_or(false);
+
+    if in_orca_env && orca.is_available() {
+        return Some(orca);
+    }
+
+    if in_herdr_env && herdr.is_available() {
+        return Some(herdr);
+    }
+
+    if orca.detect_current_pane().is_ok() {
+        return Some(orca);
+    }
+
+    if herdr.detect_current_pane().is_ok() {
+        return Some(herdr);
+    }
+
+    None
+}
+
 fn main() {
     unsafe {
-        signal(2, sigint_handler); // 2 = SIGINT (Ctrl+C)
+        signal(2, sigint_handler); // SIGINT (Ctrl+C)
     }
+
+    let args: Vec<String> = env::args().collect();
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        println!("Harness Queue (hq) — Terminal-based coding agent queue\n");
+        println!("USAGE:");
+        println!("  hq [PROMPT]        Launch hq in an adjacent terminal pane");
+        println!("  hq --help          Show this help text\n");
+        println!("ENVIRONMENTS:");
+        println!("  • Orca IDE         Native terminal API & split panes");
+        println!("  • Herdr            Terminal pane manager & agent IPC\n");
+        println!("SUPPORTED AGENTS:");
+        println!("  Codex, Claude Code, OpenCode, OMP, Pi, Google Antigravity (AGY)");
+        return;
+    }
+
+    let cli_initial_prompt: Option<String> = if args.len() > 1 {
+        let joined = args[1..].join(" ");
+        let trimmed = joined.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    } else {
+        None
+    };
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
     let stdin = io::stdin();
     let mut reader = BufReader::new(stdin.lock());
 
-    // 1. Detect terminal adapter (Herdr only)
-    let herdr = Arc::new(HerdrAdapter::new());
-    if !herdr.is_available() {
-        eprintln!("Error: Herdr environment was not detected.");
-        eprintln!("Please run hq inside a Herdr pane with an adjacent agent.");
-        std::process::exit(1);
-    }
-    let terminal: Arc<dyn TerminalAdapter> = herdr;
-
-    // 2. Discover adjacent agent
-    let current_pane = match terminal.detect_current_pane() {
-        Ok(cp) => cp,
-        Err(e) => {
-            eprintln!("Error detecting current pane: {}", e);
+    // 1. Detect terminal adapter (Orca IDE or Herdr)
+    let terminal = match detect_terminal_environment() {
+        Some(t) => t,
+        None => {
+            let _ = write!(out, "{}", format_not_detected_guide());
+            let _ = out.flush();
             std::process::exit(1);
         }
     };
 
-    let target = match terminal.find_adjacent_agent(&current_pane) {
-        Ok(harness_queue::terminal::NeighborDetection::Exact(t)) => t,
-        Ok(harness_queue::terminal::NeighborDetection::Ambiguous(list)) => {
-            eprintln!("Error: ambiguous adjacent agents found ({}).", list.len());
-            for (idx, item) in list.iter().enumerate() {
-                eprintln!(
-                    "  {}) {} at pane {}",
-                    idx + 1,
-                    item.harness.display_name(),
-                    item.pane_id
-                );
-            }
+    // 2. Discover caller terminal pane and adjacent agent
+    let current_pane = match terminal.detect_current_pane() {
+        Ok(cp) => cp,
+        Err(e) => {
+            eprintln!("Error detecting current terminal pane: {}", e);
             std::process::exit(1);
         }
-        Ok(harness_queue::terminal::NeighborDetection::NoneFound(msg)) => {
+    };
+
+    let target: AgentTarget = match terminal.find_adjacent_agent(&current_pane) {
+        Ok(NeighborDetection::Exact(t)) => t,
+        Ok(NeighborDetection::Ambiguous(list)) => {
+            match select_ambiguous_target(&mut reader, &mut out, &list) {
+                Some(selected) => selected,
+                None => {
+                    eprintln!("No agent target selected.");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Ok(NeighborDetection::NoneFound(msg)) => {
             eprintln!("Error: {}", msg);
             std::process::exit(1);
         }
@@ -75,19 +131,29 @@ fn main() {
         }
     };
 
-    // Print detection banner
-    let detection_msg = format_agent_detection(terminal.terminal_name(), &target);
-    let _ = writeln!(out, "{}", detection_msg);
-
-    // 3. Print mode selection menu
-    let _ = write!(out, "{}", format_mode_selection_menu());
+    // 3. Render clean boxed header
+    let header = format_boxed_header(terminal.terminal_name(), &current_pane, &target);
+    let _ = writeln!(out, "\n{}", header);
     let _ = out.flush();
 
-    let selected_mode = read_mode_selection(&mut reader);
+    // 4. Mode and initial prompt determination
+    let (selected_mode, initial_prompt) = if let Some(prompt) = cli_initial_prompt {
+        (Mode::AutoSend, Some(prompt))
+    } else {
+        let _ = write!(out, "{}", format_mode_prompt());
+        let _ = out.flush();
 
-    let harness: Arc<dyn harness_queue::harness::HarnessAdapter> =
-        Arc::from(create_harness_adapter(&target.harness));
-    let mut supervisor = Supervisor::new(terminal.clone(), harness.clone(), selected_mode);
+        let (mode, direct_prompt) = read_initial_input(&mut reader);
+        if mode == Mode::AutoSend && direct_prompt.is_none() {
+            let p = read_prompt_input(&mut reader, &mut out, "\n› Enter prompt:\n");
+            (Mode::AutoSend, p)
+        } else {
+            (mode, direct_prompt)
+        }
+    };
+
+    let harness = Arc::from(create_harness_adapter(&target.harness));
+    let mut supervisor = Supervisor::new(terminal.clone(), harness, selected_mode);
     supervisor.target = Some(target.clone());
     let _ = supervisor
         .state_machine
@@ -98,7 +164,7 @@ fn main() {
 
     match selected_mode {
         Mode::AutoResume => {
-            let _ = writeln!(out, "✓ Mode selected: Auto-resume");
+            let _ = writeln!(out, "\n✓ Mode selected: Auto-resume");
             let _ = writeln!(out, "✓ Built-in continuation prompt loaded\n");
             let _ = writeln!(
                 out,
@@ -106,25 +172,29 @@ fn main() {
                 target.harness.display_name(),
                 target.short_session_id()
             );
-            supervisor.enqueue_prompt(harness_queue::models::DEFAULT_CONTINUATION_PROMPT.to_string());
+            supervisor.enqueue_prompt(DEFAULT_CONTINUATION_PROMPT.to_string());
         }
         Mode::AutoSend => {
-            let _ = writeln!(out, "✓ Mode selected: Auto-send\n");
-            if let Some(initial_prompt) =
-                read_prompt_input(&mut reader, &mut out, "› Enter prompt:\n")
-            {
-                let id = supervisor.enqueue_prompt(initial_prompt);
-                let _ = writeln!(out, "✓ Prompt #{} queued", id);
+            let _ = writeln!(out, "\n✓ Mode selected: Auto-send");
+            if let Some(prompt_text) = initial_prompt {
+                let id = supervisor.enqueue_prompt(prompt_text);
+                let _ = writeln!(out, "✓ Prompt #{} queued\n", id);
             }
+            let _ = writeln!(
+                out,
+                "● Watching {} session {}",
+                target.harness.display_name(),
+                target.short_session_id()
+            );
         }
     }
     let _ = out.flush();
 
-    // Spawn background worker tick thread and prompt receiver channel
+    // 5. Continuous queue loop
     let (tx, rx) = std::sync::mpsc::channel::<String>();
-
-    // Input thread: continuously reads next prompts without exiting
     let input_tx = tx.clone();
+
+    // Background thread continuously accepts prompts
     thread::spawn(move || {
         let stdin = io::stdin();
         let mut r = BufReader::new(stdin.lock());
@@ -147,16 +217,14 @@ fn main() {
         }
     });
 
-    // Main supervisor loop
+    // Supervisor event loop
     while RUNNING.load(Ordering::SeqCst) {
-        // Collect any queued user inputs from channel
         while let Ok(prompt) = rx.try_recv() {
             let id = supervisor.enqueue_prompt(prompt);
             let _ = writeln!(out, "✓ Prompt #{} queued", id);
             let _ = out.flush();
         }
 
-        // Run supervisor tick
         match supervisor.tick() {
             Ok(events) => {
                 for ev in events {

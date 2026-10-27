@@ -8,6 +8,92 @@ pub enum InputEvent {
     Eof,
 }
 
+pub fn shorten_handle(handle: &str) -> &str {
+    if handle.starts_with("term_") {
+        if let Some(pos) = handle.find('-') {
+            return &handle[..pos];
+        }
+    }
+    handle
+}
+
+pub fn format_boxed_header(
+    terminal_name: &str,
+    current_pane: &str,
+    target: &AgentTarget,
+) -> String {
+    let title = "Harness Queue (hq) v0.1";
+    let host_line = format!(
+        "Host: {} · Location: {}",
+        terminal_name,
+        shorten_handle(current_pane)
+    );
+    let target_detail = if target.session_id.is_empty() || target.session_id == target.pane_id {
+        format!(
+            "Target: {} ({})",
+            target.harness.display_name(),
+            shorten_handle(&target.pane_id)
+        )
+    } else {
+        format!(
+            "Target: {} ({} · session {})",
+            target.harness.display_name(),
+            shorten_handle(&target.pane_id),
+            target.short_session_id()
+        )
+    };
+
+    let content_lines = [title, &host_line, &target_detail];
+    let max_len = content_lines
+        .iter()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(40);
+    let inner_width = max_len.max(54) + 4;
+
+    let mut out = String::new();
+    out.push('┌');
+    out.push_str(&"─".repeat(inner_width));
+    out.push_str("┐\n");
+
+    for line in &content_lines {
+        let line_len = line.chars().count();
+        let padding = inner_width.saturating_sub(line_len + 2);
+        out.push_str("│  ");
+        out.push_str(line);
+        out.push_str(&" ".repeat(padding));
+        out.push_str("│\n");
+    }
+
+    out.push('└');
+    out.push_str(&"─".repeat(inner_width));
+    out.push('┘');
+
+    out
+}
+
+pub fn format_not_detected_guide() -> String {
+    r#"┌────────────────────────────────────────────────────────┐
+│  Harness Queue (hq) — Terminal Not Detected            │
+└────────────────────────────────────────────────────────┘
+
+hq operates alongside coding agents in a split terminal pane.
+
+To use hq:
+  • Orca IDE:
+    Open a terminal pane next to your agent (Codex, Claude, etc.)
+    and run `hq`. Orca's terminal API is detected automatically.
+
+  • Herdr:
+    Open an adjacent pane next to your agent in Herdr and run `hq`.
+    Herdr CLI and socket IPC are detected automatically.
+
+Supported agents:
+  Codex, Claude Code, OpenCode, OMP, Pi, Google Antigravity (AGY)
+"#
+    .to_string()
+}
+
 pub fn format_agent_detection(terminal_name: &str, target: &AgentTarget) -> String {
     format!(
         "✓ {} detected\n✓ Adjacent agent: {}\n  Session {} · pane {}",
@@ -34,6 +120,19 @@ Harness Queue v0.1
         .to_string()
 }
 
+pub fn format_mode_prompt() -> String {
+    r#"
+? Select mode:
+  1) Auto-resume  (default — press [Enter])
+     Resume with the built-in continuation prompt.
+
+  2) Auto-send
+     Queue your own prompts for automatic delivery.
+
+› Choice [1] or enter prompt directly: "#
+        .to_string()
+}
+
 pub fn read_mode_selection<R: BufRead>(reader: &mut R) -> Mode {
     let mut line = String::new();
     if reader.read_line(&mut line).is_ok() {
@@ -43,6 +142,59 @@ pub fn read_mode_selection<R: BufRead>(reader: &mut R) -> Mode {
         }
     }
     Mode::AutoResume
+}
+
+pub fn read_initial_input<R: BufRead>(reader: &mut R) -> (Mode, Option<String>) {
+    let mut line = String::new();
+    if reader.read_line(&mut line).is_ok() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed == "1" {
+            return (Mode::AutoResume, None);
+        } else if trimmed == "2" {
+            return (Mode::AutoSend, None);
+        } else {
+            return (Mode::AutoSend, Some(trimmed.to_string()));
+        }
+    }
+    (Mode::AutoResume, None)
+}
+
+pub fn select_ambiguous_target<R: BufRead, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    targets: &[AgentTarget],
+) -> Option<AgentTarget> {
+    if targets.is_empty() {
+        return None;
+    }
+    if targets.len() == 1 {
+        return Some(targets[0].clone());
+    }
+
+    let _ = writeln!(writer, "\n? Multiple adjacent agents detected:");
+    for (idx, target) in targets.iter().enumerate() {
+        let _ = writeln!(
+            writer,
+            "  {}) {} ({})",
+            idx + 1,
+            target.harness.display_name(),
+            shorten_handle(&target.pane_id)
+        );
+    }
+    let _ = write!(writer, "› Select [1]: ");
+    let _ = writer.flush();
+
+    let mut line = String::new();
+    if reader.read_line(&mut line).is_ok() {
+        let trimmed = line.trim();
+        if let Ok(num) = trimmed.parse::<usize>() {
+            if num >= 1 && num <= targets.len() {
+                return Some(targets[num - 1].clone());
+            }
+        }
+    }
+
+    Some(targets[0].clone())
 }
 
 pub fn read_prompt_event<R: BufRead, W: Write>(
