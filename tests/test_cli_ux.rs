@@ -53,33 +53,36 @@ fn test_format_boxed_header_and_guide() {
 
 #[test]
 fn test_read_initial_input_cases() {
-    use harness_queue::cli::read_initial_input;
-    use harness_queue::models::Mode;
+    use harness_queue::cli::{read_initial_input, InitialChoice};
     use std::io::Cursor;
 
     // Empty input (press Enter) -> AutoResume
     let mut empty = Cursor::new(b"\n");
-    let (mode, prompt) = read_initial_input(&mut empty);
-    assert_eq!(mode, Mode::AutoResume);
-    assert!(prompt.is_none());
+    let choice = read_initial_input(&mut empty);
+    assert_eq!(choice, InitialChoice::AutoResume);
 
     // "1" -> AutoResume
     let mut one = Cursor::new(b"1\n");
-    let (mode, prompt) = read_initial_input(&mut one);
-    assert_eq!(mode, Mode::AutoResume);
-    assert!(prompt.is_none());
+    let choice = read_initial_input(&mut one);
+    assert_eq!(choice, InitialChoice::AutoResume);
 
     // "2" -> AutoSend (no prompt yet)
     let mut two = Cursor::new(b"2\n");
-    let (mode, prompt) = read_initial_input(&mut two);
-    assert_eq!(mode, Mode::AutoSend);
-    assert!(prompt.is_none());
+    let choice = read_initial_input(&mut two);
+    assert_eq!(choice, InitialChoice::AutoSend(None));
 
     // Custom prompt typed directly -> AutoSend with that prompt!
     let mut custom = Cursor::new(b"Fix the receiving UI and run tests\n");
-    let (mode, prompt) = read_initial_input(&mut custom);
-    assert_eq!(mode, Mode::AutoSend);
-    assert_eq!(prompt.as_deref(), Some("Fix the receiving UI and run tests"));
+    let choice = read_initial_input(&mut custom);
+    assert_eq!(
+        choice,
+        InitialChoice::AutoSend(Some("Fix the receiving UI and run tests".to_string()))
+    );
+
+    // EOF / Ctrl+D (0 bytes) -> Cancelled!
+    let mut eof = Cursor::new(b"");
+    let choice = read_initial_input(&mut eof);
+    assert_eq!(choice, InitialChoice::Cancelled);
 }
 
 #[test]

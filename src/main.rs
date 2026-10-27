@@ -1,6 +1,6 @@
 use harness_queue::cli::{
     format_boxed_header, format_mode_prompt, format_not_detected_guide, read_initial_input,
-    read_prompt_event, read_prompt_input, select_ambiguous_target, InputEvent,
+    read_prompt_event, read_prompt_input, select_ambiguous_target, InitialChoice, InputEvent,
 };
 use harness_queue::harness::create_harness_adapter;
 use harness_queue::models::{AgentTarget, Mode, DEFAULT_CONTINUATION_PROMPT};
@@ -17,13 +17,24 @@ use std::thread;
 use std::time::Duration;
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
+static ATTACHED: AtomicBool = AtomicBool::new(false);
 
 extern "C" {
     fn signal(sig: i32, handler: extern "C" fn(i32)) -> usize;
+    fn _exit(status: i32) -> !;
+    fn write(fd: i32, buf: *const u8, count: usize) -> isize;
 }
 
 extern "C" fn sigint_handler(_: i32) {
-    RUNNING.store(false, Ordering::SeqCst);
+    if !ATTACHED.load(Ordering::SeqCst) {
+        unsafe {
+            let msg = b"\n\n\xe2\x9c\x93 Cancelled\n";
+            let _ = write(1, msg.as_ptr(), msg.len());
+            _exit(130);
+        }
+    } else {
+        RUNNING.store(false, Ordering::SeqCst);
+    }
 }
 
 fn detect_terminal_environment() -> Option<Arc<dyn TerminalAdapter>> {
@@ -130,8 +141,9 @@ fn main() {
             match select_ambiguous_target(&mut reader, &mut out, &list) {
                 Some(selected) => selected,
                 None => {
-                    eprintln!("No agent target selected.");
-                    std::process::exit(1);
+                    let _ = writeln!(out, "\n✓ Cancelled");
+                    let _ = out.flush();
+                    std::process::exit(0);
                 }
             }
         }
@@ -157,12 +169,23 @@ fn main() {
         let _ = write!(out, "{}", format_mode_prompt());
         let _ = out.flush();
 
-        let (mode, direct_prompt) = read_initial_input(&mut reader);
-        if mode == Mode::AutoSend && direct_prompt.is_none() {
-            let p = read_prompt_input(&mut reader, &mut out, "\n› Enter prompt:\n");
-            (Mode::AutoSend, p)
-        } else {
-            (mode, direct_prompt)
+        match read_initial_input(&mut reader) {
+            InitialChoice::Cancelled => {
+                let _ = writeln!(out, "\n✓ Cancelled");
+                let _ = out.flush();
+                std::process::exit(0);
+            }
+            InitialChoice::AutoResume => (Mode::AutoResume, None),
+            InitialChoice::AutoSend(None) => {
+                let p = read_prompt_input(&mut reader, &mut out, "\n› Enter prompt:\n");
+                if p.is_none() && !RUNNING.load(Ordering::SeqCst) {
+                    let _ = writeln!(out, "\n✓ Cancelled");
+                    let _ = out.flush();
+                    std::process::exit(0);
+                }
+                (Mode::AutoSend, p)
+            }
+            InitialChoice::AutoSend(Some(prompt)) => (Mode::AutoSend, Some(prompt)),
         }
     };
 
@@ -205,6 +228,9 @@ fn main() {
     let _ = out.flush();
 
     // 5. Continuous queue loop
+    // Mark attached so future SIGINT triggers graceful detachment instead of immediate abort
+    ATTACHED.store(true, Ordering::SeqCst);
+
     let (tx, rx) = std::sync::mpsc::channel::<String>();
     let input_tx = tx.clone();
 

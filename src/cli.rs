@@ -148,19 +148,29 @@ pub fn read_mode_selection<R: BufRead>(reader: &mut R) -> Mode {
     Mode::AutoResume
 }
 
-pub fn read_initial_input<R: BufRead>(reader: &mut R) -> (Mode, Option<String>) {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InitialChoice {
+    AutoResume,
+    AutoSend(Option<String>),
+    Cancelled,
+}
+
+pub fn read_initial_input<R: BufRead>(reader: &mut R) -> InitialChoice {
     let mut line = String::new();
-    if reader.read_line(&mut line).is_ok() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed == "1" {
-            return (Mode::AutoResume, None);
-        } else if trimmed == "2" {
-            return (Mode::AutoSend, None);
-        } else {
-            return (Mode::AutoSend, Some(trimmed.to_string()));
+    match reader.read_line(&mut line) {
+        Ok(0) => InitialChoice::Cancelled, // EOF (Ctrl+D)
+        Ok(_) => {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed == "1" {
+                InitialChoice::AutoResume
+            } else if trimmed == "2" {
+                InitialChoice::AutoSend(None)
+            } else {
+                InitialChoice::AutoSend(Some(trimmed.to_string()))
+            }
         }
+        Err(_) => InitialChoice::Cancelled,
     }
-    (Mode::AutoResume, None)
 }
 
 pub fn select_ambiguous_target<R: BufRead, W: Write>(
@@ -189,16 +199,22 @@ pub fn select_ambiguous_target<R: BufRead, W: Write>(
     let _ = writer.flush();
 
     let mut line = String::new();
-    if reader.read_line(&mut line).is_ok() {
-        let trimmed = line.trim();
-        if let Ok(num) = trimmed.parse::<usize>() {
-            if num >= 1 && num <= targets.len() {
-                return Some(targets[num - 1].clone());
+    match reader.read_line(&mut line) {
+        Ok(0) => None, // EOF / Cancelled
+        Ok(_) => {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return Some(targets[0].clone());
             }
+            if let Ok(num) = trimmed.parse::<usize>() {
+                if num >= 1 && num <= targets.len() {
+                    return Some(targets[num - 1].clone());
+                }
+            }
+            Some(targets[0].clone())
         }
+        Err(_) => None,
     }
-
-    Some(targets[0].clone())
 }
 
 pub fn read_prompt_event<R: BufRead, W: Write>(
