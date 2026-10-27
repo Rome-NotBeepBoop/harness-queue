@@ -23,18 +23,12 @@ use std::time::Duration;
 static RUNNING: AtomicBool = AtomicBool::new(true);
 static ATTACHED: AtomicBool = AtomicBool::new(false);
 
-extern "C" {
-    fn signal(sig: i32, handler: extern "C" fn(i32)) -> usize;
-    fn _exit(status: i32) -> !;
-    fn write(fd: i32, buf: *const u8, count: usize) -> isize;
-}
-
 extern "C" fn sigint_handler(_: i32) {
     if !ATTACHED.load(Ordering::SeqCst) {
         unsafe {
             let msg = b"\n\n\xe2\x9c\x93 Cancelled\n";
-            let _ = write(1, msg.as_ptr(), msg.len());
-            _exit(0);
+            let _ = libc::write(1, msg.as_ptr() as *const libc::c_void, msg.len());
+            libc::_exit(0);
         }
     } else {
         RUNNING.store(false, Ordering::SeqCst);
@@ -97,7 +91,7 @@ fn detect_terminal_environment() -> Option<Arc<dyn TerminalAdapter>> {
 
 fn main() {
     unsafe {
-        signal(2, sigint_handler); // SIGINT (Ctrl+C)
+        libc::signal(libc::SIGINT, sigint_handler as *const () as usize); // SIGINT (Ctrl+C)
     }
 
     let args: Vec<String> = env::args().collect();
