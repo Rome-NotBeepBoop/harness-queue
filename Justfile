@@ -3,7 +3,7 @@
 
 # Default: run hq directly with cargo
 default *args:
-    @cargo run -q -- {{args}}
+    @-cargo run -q -- {{args}}
 
 # List available recipes
 help:
@@ -11,11 +11,11 @@ help:
 
 # Run hq in debug mode (passes all arguments through)
 run *args:
-    @cargo run -q -- {{args}}
+    @-cargo run -q -- {{args}}
 
 # Run hq in release mode
 run-release *args:
-    @cargo run -q --release -- {{args}}
+    @-cargo run -q --release -- {{args}}
 
 # Run the full test suite
 test *filter:

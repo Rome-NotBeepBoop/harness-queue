@@ -30,7 +30,7 @@ extern "C" fn sigint_handler(_: i32) {
         unsafe {
             let msg = b"\n\n\xe2\x9c\x93 Cancelled\n";
             let _ = write(1, msg.as_ptr(), msg.len());
-            _exit(130);
+            _exit(0);
         }
     } else {
         RUNNING.store(false, Ordering::SeqCst);
@@ -287,4 +287,5 @@ fn main() {
         .transition(harness_queue::models::State::Detached);
     let _ = writeln!(out, "\n✓ Detached cleanly");
     let _ = out.flush();
+    std::process::exit(0);
 }
