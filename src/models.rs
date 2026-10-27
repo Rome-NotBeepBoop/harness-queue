@@ -50,6 +50,8 @@ pub struct QueueItem {
     pub status: ItemStatus,
     pub queued_at: u64,
     pub submitted_at: Option<u64>,
+    #[serde(default)]
+    pub attachments_summary: Option<String>,
 }
 
 impl QueueItem {
@@ -64,7 +66,14 @@ impl QueueItem {
             status: ItemStatus::Queued,
             queued_at: now,
             submitted_at: None,
+            attachments_summary: None,
         }
+    }
+
+    pub fn with_attachments(id: usize, prompt: String, summary: Option<String>) -> Self {
+        let mut item = Self::new(id, prompt);
+        item.attachments_summary = summary;
+        item
     }
 
     pub fn mark_submitting(&mut self, timestamp: u64) {

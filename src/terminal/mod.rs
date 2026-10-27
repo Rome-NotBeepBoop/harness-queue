@@ -58,6 +58,7 @@ pub trait TerminalAdapter: Send + Sync {
     fn detect_current_pane(&self) -> Result<String, TerminalError>;
     fn find_adjacent_agent(&self, current_pane: &str) -> Result<NeighborDetection, TerminalError>;
     fn get_agent_status(&self, pane_id: &str) -> Result<AgentStatus, TerminalError>;
-    fn send_prompt(&self, target: &AgentTarget, prompt: &str) -> Result<DeliveryAck, TerminalError>;
+    fn send_prompt(&self, target: &AgentTarget, prompt: &str)
+        -> Result<DeliveryAck, TerminalError>;
     fn verify_target_alive(&self, target: &AgentTarget) -> Result<bool, TerminalError>;
 }

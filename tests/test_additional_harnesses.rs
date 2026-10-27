@@ -46,7 +46,9 @@ fn test_claude_harness_submission_via_terminal() {
     let readiness = adapter.is_ready(&target, &terminal).expect("readiness");
     assert_eq!(readiness, AgentReadiness::Ready);
 
-    let ack = adapter.submit_prompt(&target, "Fix the bug", &terminal).expect("submitted");
+    let ack = adapter
+        .submit_prompt(&target, "Fix the bug", &terminal)
+        .expect("submitted");
     assert!(ack.acknowledged);
 
     // Quota returns Available or Unknown for partial adapters

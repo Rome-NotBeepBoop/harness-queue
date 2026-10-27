@@ -77,6 +77,15 @@ impl Supervisor {
         self.queue.enqueue(prompt)
     }
 
+    pub fn enqueue_prompt_with_attachments(
+        &mut self,
+        prompt: String,
+        attachments_summary: Option<String>,
+    ) -> usize {
+        self.queue
+            .enqueue_with_attachments(prompt, attachments_summary)
+    }
+
     pub fn tick(&mut self) -> Result<Vec<String>, String> {
         let target = match &self.target {
             Some(t) => t.clone(),
@@ -94,13 +103,17 @@ impl Supervisor {
         if !alive {
             let _ = self.state_machine.transition(State::Error);
             return Err(
-                "Target agent process changed or died! Halting prompt delivery safely."
-                    .to_string(),
+                "Target agent process changed or died! Halting prompt delivery safely.".to_string(),
             );
         }
 
         // Halt dispatch if any item is in uncertain delivery
-        if self.queue.all_items().iter().any(|i| i.status == crate::models::ItemStatus::Uncertain) {
+        if self
+            .queue
+            .all_items()
+            .iter()
+            .any(|i| i.status == crate::models::ItemStatus::Uncertain)
+        {
             return Ok(events);
         }
 
@@ -111,7 +124,10 @@ impl Supervisor {
             .map_err(|e| format!("Quota check failed: {}", e))?;
 
         match quota {
-            QuotaStatus::RateLimited { resets_at, reason: _ } => {
+            QuotaStatus::RateLimited {
+                resets_at,
+                reason: _,
+            } => {
                 self.quota_resets_at = resets_at;
                 if !self.reported_waiting_quota {
                     let _ = self.state_machine.transition(State::RateLimited);
@@ -229,9 +245,9 @@ impl Supervisor {
                 }
 
                 // Submit prompt
-                let ack_res = self
-                    .harness
-                    .submit_prompt(&target, &next_item.prompt, self.terminal.as_ref());
+                let ack_res =
+                    self.harness
+                        .submit_prompt(&target, &next_item.prompt, self.terminal.as_ref());
 
                 match ack_res {
                     Ok(ack) if ack.acknowledged => {

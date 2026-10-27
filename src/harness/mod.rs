@@ -56,7 +56,9 @@ impl std::fmt::Display for HarnessError {
             HarnessError::SessionNotFound => write!(f, "Session not found"),
             HarnessError::QuotaCheckFailed(msg) => write!(f, "Quota check failed: {}", msg),
             HarnessError::ExecutionFailed(msg) => write!(f, "Execution failed: {}", msg),
-            HarnessError::UnsupportedCapability(msg) => write!(f, "Unsupported capability: {}", msg),
+            HarnessError::UnsupportedCapability(msg) => {
+                write!(f, "Unsupported capability: {}", msg)
+            }
         }
     }
 }
@@ -66,7 +68,11 @@ impl std::error::Error for HarnessError {}
 pub trait HarnessAdapter: Send + Sync {
     fn kind(&self) -> HarnessKind;
     fn check_quota(&self, session_id: &str) -> Result<QuotaStatus, HarnessError>;
-    fn is_ready(&self, target: &AgentTarget, terminal: &dyn TerminalAdapter) -> Result<AgentReadiness, HarnessError>;
+    fn is_ready(
+        &self,
+        target: &AgentTarget,
+        terminal: &dyn TerminalAdapter,
+    ) -> Result<AgentReadiness, HarnessError>;
     fn submit_prompt(
         &self,
         target: &AgentTarget,

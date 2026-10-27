@@ -4,8 +4,8 @@ use serde_json::Value;
 use std::process::Command;
 
 pub fn parse_neighbor_result(json_str: &str) -> Result<Option<String>, TerminalError> {
-    let v: Value = serde_json::from_str(json_str)
-        .map_err(|e| TerminalError::JsonParseError(e.to_string()))?;
+    let v: Value =
+        serde_json::from_str(json_str).map_err(|e| TerminalError::JsonParseError(e.to_string()))?;
     if let Some(neighbor) = v.pointer("/result/neighbor/neighbor_pane_id") {
         if let Some(s) = neighbor.as_str() {
             return Ok(Some(s.to_string()));
@@ -51,11 +51,13 @@ impl HerdrAdapter {
         let v: Value = serde_json::from_str(&proc_json)
             .map_err(|e| TerminalError::JsonParseError(e.to_string()))?;
 
-        let shell_pid = v.pointer("/result/process_info/shell_pid")
+        let shell_pid = v
+            .pointer("/result/process_info/shell_pid")
             .and_then(|p| p.as_u64())
             .unwrap_or(0) as u32;
 
-        let foreground = v.pointer("/result/process_info/foreground_processes")
+        let foreground = v
+            .pointer("/result/process_info/foreground_processes")
             .and_then(|fp| fp.as_array());
 
         let mut target_pid = shell_pid;
@@ -84,7 +86,8 @@ impl HerdrAdapter {
         let pv: Value = serde_json::from_str(&pane_json)
             .map_err(|e| TerminalError::JsonParseError(e.to_string()))?;
 
-        let terminal_id = pv.pointer("/result/pane/terminal_id")
+        let terminal_id = pv
+            .pointer("/result/pane/terminal_id")
             .and_then(|t| t.as_str())
             .unwrap_or("")
             .to_string();
@@ -134,8 +137,14 @@ impl TerminalAdapter for HerdrAdapter {
     }
 
     fn is_available(&self) -> bool {
-        std::env::var("HERDR_ENV").map(|v| v == "1").unwrap_or(false)
-            || Command::new(&self.herdr_bin).arg("status").output().map(|o| o.status.success()).unwrap_or(false)
+        std::env::var("HERDR_ENV")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+            || Command::new(&self.herdr_bin)
+                .arg("status")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
     }
 
     fn detect_current_pane(&self) -> Result<String, TerminalError> {
@@ -146,8 +155,8 @@ impl TerminalAdapter for HerdrAdapter {
         }
 
         let out = self.run_herdr(&["pane", "current"])?;
-        let v: Value = serde_json::from_str(&out)
-            .map_err(|e| TerminalError::JsonParseError(e.to_string()))?;
+        let v: Value =
+            serde_json::from_str(&out).map_err(|e| TerminalError::JsonParseError(e.to_string()))?;
         if let Some(id) = v.pointer("/result/pane/pane_id").and_then(|p| p.as_str()) {
             Ok(id.to_string())
         } else {
@@ -161,7 +170,14 @@ impl TerminalAdapter for HerdrAdapter {
         let mut found_neighbors = Vec::new();
 
         for dir in directions {
-            if let Ok(out) = self.run_herdr(&["pane", "neighbor", "--pane", current_pane, "--direction", dir]) {
+            if let Ok(out) = self.run_herdr(&[
+                "pane",
+                "neighbor",
+                "--pane",
+                current_pane,
+                "--direction",
+                dir,
+            ]) {
                 if let Ok(Some(neighbor_id)) = parse_neighbor_result(&out) {
                     if !found_neighbors.contains(&neighbor_id) {
                         found_neighbors.push(neighbor_id);
@@ -182,7 +198,9 @@ impl TerminalAdapter for HerdrAdapter {
             if let Ok(Some(target)) = self.detect_agent_in_pane(&n_id) {
                 // Must be in the exact same folder
                 let target_path = std::path::Path::new(&target.cwd);
-                if target.cwd.is_empty() || crate::terminal::orca::is_same_or_subfolder(&caller_cwd, target_path) {
+                if target.cwd.is_empty()
+                    || crate::terminal::orca::is_same_or_subfolder(&caller_cwd, target_path)
+                {
                     targets.push(target);
                 }
             }
@@ -205,7 +223,8 @@ impl TerminalAdapter for HerdrAdapter {
             Ok(out) => {
                 let v: Value = serde_json::from_str(&out)
                     .map_err(|e| TerminalError::JsonParseError(e.to_string()))?;
-                let status_str = v.pointer("/result/agent/status")
+                let status_str = v
+                    .pointer("/result/agent/status")
                     .and_then(|s| s.as_str())
                     .unwrap_or("unknown");
                 match status_str {
@@ -220,7 +239,8 @@ impl TerminalAdapter for HerdrAdapter {
                 let proc_out = self.run_herdr(&["pane", "process-info", "--pane", pane_id])?;
                 let v: Value = serde_json::from_str(&proc_out)
                     .map_err(|e| TerminalError::JsonParseError(e.to_string()))?;
-                let foreground = v.pointer("/result/process_info/foreground_processes")
+                let foreground = v
+                    .pointer("/result/process_info/foreground_processes")
                     .and_then(|fp| fp.as_array());
                 if let Some(fp) = foreground {
                     if !fp.is_empty() {
@@ -235,7 +255,11 @@ impl TerminalAdapter for HerdrAdapter {
         }
     }
 
-    fn send_prompt(&self, target: &AgentTarget, prompt: &str) -> Result<DeliveryAck, TerminalError> {
+    fn send_prompt(
+        &self,
+        target: &AgentTarget,
+        prompt: &str,
+    ) -> Result<DeliveryAck, TerminalError> {
         // Try herdr agent prompt first
         let res = self.run_herdr(&["agent", "prompt", &target.pane_id, prompt]);
         if let Ok(out) = res {
@@ -260,11 +284,13 @@ impl TerminalAdapter for HerdrAdapter {
         let v: Value = serde_json::from_str(&proc_json)
             .map_err(|e| TerminalError::JsonParseError(e.to_string()))?;
 
-        let shell_pid = v.pointer("/result/process_info/shell_pid")
+        let shell_pid = v
+            .pointer("/result/process_info/shell_pid")
             .and_then(|p| p.as_u64())
             .unwrap_or(0) as u32;
 
-        let foreground = v.pointer("/result/process_info/foreground_processes")
+        let foreground = v
+            .pointer("/result/process_info/foreground_processes")
             .and_then(|fp| fp.as_array());
 
         let mut current_pid = shell_pid;

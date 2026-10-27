@@ -183,3 +183,35 @@ fn test_orca_never_detects_agents_outside_current_folder() {
         _ => panic!("Expected NoneFound because agent is in a different folder"),
     }
 }
+
+#[test]
+fn test_parse_orca_terminal_with_lone_surrogates() {
+    // Lone leading surrogate \ud83d without low surrogate (e.g. truncated emoji from terminal buffer)
+    let bad_json = r#"{
+        "ok": true,
+        "result": {
+            "terminals": [
+                {
+                    "handle": "term_pi",
+                    "tabId": "tab_1",
+                    "worktreePath": "/Users/romey/Developer/harness-queue",
+                    "title": "Pi",
+                    "connected": true,
+                    "writable": true,
+                    "preview": "Thinking...\ud83d hello",
+                    "agentIdentity": "pi"
+                }
+            ]
+        }
+    }"#;
+
+    let res = parse_orca_terminals_json(bad_json);
+    assert!(
+        res.is_ok(),
+        "Expected lone surrogate to be sanitized instead of erroring: {:?}",
+        res
+    );
+    let terminals = res.unwrap();
+    assert_eq!(terminals.len(), 1);
+    assert_eq!(terminals[0].handle, "term_pi");
+}

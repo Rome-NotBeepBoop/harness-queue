@@ -40,7 +40,11 @@ impl HarnessAdapter for MockHarness {
         Ok(self.quota.lock().unwrap().clone())
     }
 
-    fn is_ready(&self, target: &AgentTarget, terminal: &dyn TerminalAdapter) -> Result<AgentReadiness, HarnessError> {
+    fn is_ready(
+        &self,
+        target: &AgentTarget,
+        terminal: &dyn TerminalAdapter,
+    ) -> Result<AgentReadiness, HarnessError> {
         if let Some(r) = self.readiness.lock().unwrap().clone() {
             return Ok(r);
         }
@@ -48,10 +52,12 @@ impl HarnessAdapter for MockHarness {
         match terminal.get_agent_status(&target.pane_id) {
             Ok(AgentStatus::Ready) => Ok(AgentReadiness::Ready),
             Ok(AgentStatus::Busy) => Ok(AgentReadiness::Busy),
-            Ok(AgentStatus::BlockedApproval) => {
-                Ok(AgentReadiness::BlockedOnApproval("User approval required".to_string()))
+            Ok(AgentStatus::BlockedApproval) => Ok(AgentReadiness::BlockedOnApproval(
+                "User approval required".to_string(),
+            )),
+            Ok(AgentStatus::RateLimited) => {
+                Ok(AgentReadiness::Interrupted("Rate limited".to_string()))
             }
-            Ok(AgentStatus::RateLimited) => Ok(AgentReadiness::Interrupted("Rate limited".to_string())),
             _ => Ok(AgentReadiness::Ready),
         }
     }

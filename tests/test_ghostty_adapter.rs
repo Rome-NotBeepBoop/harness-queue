@@ -12,7 +12,10 @@ fn test_parse_ghostty_terminals_output() {
     let entries = parse_ghostty_terminals_output(raw);
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].id, "term_1");
-    assert_eq!(entries[0].working_directory, "/Users/romey/Developer/harness-queue");
+    assert_eq!(
+        entries[0].working_directory,
+        "/Users/romey/Developer/harness-queue"
+    );
     assert_eq!(entries[0].title, "OpenAI Codex");
 }
 
@@ -76,7 +79,8 @@ fn test_ghostty_neighbor_rejects_different_folder() {
 
     match res {
         NeighborDetection::NoneFound(msg) => {
-            assert!(msg.contains("No adjacent agent found in the current Ghostty split pane and folder"));
+            assert!(msg
+                .contains("No adjacent agent found in the current Ghostty split pane and folder"));
         }
         _ => panic!("Expected NoneFound because agent is in a different folder"),
     }

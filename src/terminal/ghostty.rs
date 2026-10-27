@@ -204,7 +204,11 @@ end tell"#;
         Ok(AgentStatus::Ready)
     }
 
-    fn send_prompt(&self, target: &AgentTarget, prompt: &str) -> Result<DeliveryAck, TerminalError> {
+    fn send_prompt(
+        &self,
+        target: &AgentTarget,
+        prompt: &str,
+    ) -> Result<DeliveryAck, TerminalError> {
         let script = build_ghostty_send_script(&target.terminal_id, prompt);
         let out = self.run_osascript(&script)?;
         if out.contains("ok") {
@@ -213,7 +217,9 @@ end tell"#;
                 details: format!("Delivered to Ghostty terminal {}", target.terminal_id),
             })
         } else {
-            Err(TerminalError::CommandFailed("Ghostty did not acknowledge delivery".to_string()))
+            Err(TerminalError::CommandFailed(
+                "Ghostty did not acknowledge delivery".to_string(),
+            ))
         }
     }
 

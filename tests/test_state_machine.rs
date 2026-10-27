@@ -6,7 +6,8 @@ fn test_valid_lifecycle_transitions() {
     let mut sm = StateMachine::new();
     assert_eq!(sm.current(), State::Detecting);
 
-    sm.transition(State::SelectingMode).expect("to SelectingMode");
+    sm.transition(State::SelectingMode)
+        .expect("to SelectingMode");
     sm.transition(State::Watching).expect("to Watching");
     sm.transition(State::AgentReady).expect("to AgentReady");
 
@@ -15,7 +16,8 @@ fn test_valid_lifecycle_transitions() {
     sm.transition(State::Submitting).expect("to Submitting");
     assert!(!sm.can_dispatch());
 
-    sm.transition(State::PromptAcknowledged).expect("to PromptAcknowledged");
+    sm.transition(State::PromptAcknowledged)
+        .expect("to PromptAcknowledged");
     sm.transition(State::AgentBusy).expect("to AgentBusy");
     assert!(!sm.can_dispatch());
 

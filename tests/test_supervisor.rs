@@ -34,7 +34,9 @@ fn test_supervisor_auto_resume_flow() {
 
     // Next tick: agent is busy, prompt remains queued
     let events2 = sup.tick().expect("tick 2");
-    assert!(events2.iter().any(|e| e.contains("Waiting") || e.contains("busy")));
+    assert!(events2
+        .iter()
+        .any(|e| e.contains("Waiting") || e.contains("busy")));
     assert_eq!(sup.queue.get(2).unwrap().status, ItemStatus::Queued);
 
     // Agent finishes prompt #1
@@ -63,7 +65,9 @@ fn test_supervisor_rate_limit_and_recovery() {
 
     // Tick while rate-limited pauses dispatch
     let events = sup.tick().expect("tick rate-limited");
-    assert!(events.iter().any(|e| e.contains("Waiting for quota recovery")));
+    assert!(events
+        .iter()
+        .any(|e| e.contains("Waiting for quota recovery")));
     assert_eq!(sup.queue.get(1).unwrap().status, ItemStatus::Queued);
 
     // Recover quota
@@ -89,7 +93,9 @@ fn test_uncertain_delivery_halts_subsequent_dispatches() {
     // Force uncertain delivery
     sup.queue.mark_submitting(1, 1000).unwrap();
     sup.queue.mark_uncertain(1).unwrap();
-    sup.state_machine.transition(harness_queue::models::State::DeliveryUncertain).unwrap();
+    sup.state_machine
+        .transition(harness_queue::models::State::DeliveryUncertain)
+        .unwrap();
 
     terminal.set_status(AgentStatus::Ready);
     let events = sup.tick().unwrap();
@@ -103,9 +109,15 @@ fn test_uncertain_delivery_halts_subsequent_dispatches() {
 fn test_target_death_halts_supervisor() {
     struct DeadTerminal;
     impl harness_queue::terminal::TerminalAdapter for DeadTerminal {
-        fn terminal_name(&self) -> &'static str { "Herdr" }
-        fn is_available(&self) -> bool { true }
-        fn detect_current_pane(&self) -> Result<String, TerminalError> { Ok("w1:p1".to_string()) }
+        fn terminal_name(&self) -> &'static str {
+            "Herdr"
+        }
+        fn is_available(&self) -> bool {
+            true
+        }
+        fn detect_current_pane(&self) -> Result<String, TerminalError> {
+            Ok("w1:p1".to_string())
+        }
         fn find_adjacent_agent(&self, _pane: &str) -> Result<NeighborDetection, TerminalError> {
             Ok(NeighborDetection::Exact(AgentTarget {
                 terminal_id: "term_2".to_string(),
@@ -116,9 +128,18 @@ fn test_target_death_halts_supervisor() {
                 cwd: "/tmp".to_string(),
             }))
         }
-        fn get_agent_status(&self, _pane: &str) -> Result<AgentStatus, TerminalError> { Ok(AgentStatus::Ready) }
-        fn send_prompt(&self, _target: &AgentTarget, _prompt: &str) -> Result<harness_queue::terminal::DeliveryAck, TerminalError> {
-            Ok(harness_queue::terminal::DeliveryAck { acknowledged: true, details: "ok".to_string() })
+        fn get_agent_status(&self, _pane: &str) -> Result<AgentStatus, TerminalError> {
+            Ok(AgentStatus::Ready)
+        }
+        fn send_prompt(
+            &self,
+            _target: &AgentTarget,
+            _prompt: &str,
+        ) -> Result<harness_queue::terminal::DeliveryAck, TerminalError> {
+            Ok(harness_queue::terminal::DeliveryAck {
+                acknowledged: true,
+                details: "ok".to_string(),
+            })
         }
         fn verify_target_alive(&self, _target: &AgentTarget) -> Result<bool, TerminalError> {
             // Target terminal closed/dead

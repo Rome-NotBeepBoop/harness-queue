@@ -15,14 +15,20 @@ impl HarnessAdapter for OmpHarness {
         Ok(QuotaStatus::Available)
     }
 
-    fn is_ready(&self, target: &AgentTarget, terminal: &dyn TerminalAdapter) -> Result<AgentReadiness, HarnessError> {
+    fn is_ready(
+        &self,
+        target: &AgentTarget,
+        terminal: &dyn TerminalAdapter,
+    ) -> Result<AgentReadiness, HarnessError> {
         match terminal.get_agent_status(&target.pane_id) {
             Ok(AgentStatus::Ready) => Ok(AgentReadiness::Ready),
             Ok(AgentStatus::Busy) => Ok(AgentReadiness::Busy),
-            Ok(AgentStatus::BlockedApproval) => {
-                Ok(AgentReadiness::BlockedOnApproval("OMP confirmation prompt".to_string()))
+            Ok(AgentStatus::BlockedApproval) => Ok(AgentReadiness::BlockedOnApproval(
+                "OMP confirmation prompt".to_string(),
+            )),
+            Ok(AgentStatus::RateLimited) => {
+                Ok(AgentReadiness::Interrupted("OMP rate limit".to_string()))
             }
-            Ok(AgentStatus::RateLimited) => Ok(AgentReadiness::Interrupted("OMP rate limit".to_string())),
             _ => Ok(AgentReadiness::Ready),
         }
     }

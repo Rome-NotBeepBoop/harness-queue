@@ -66,7 +66,9 @@ fn test_approval_blocked_is_not_rate_limited() {
         cwd: "/tmp".to_string(),
     };
 
-    let readiness = harness.is_ready(&target, &terminal).expect("readiness check");
+    let readiness = harness
+        .is_ready(&target, &terminal)
+        .expect("readiness check");
     assert!(matches!(readiness, AgentReadiness::BlockedOnApproval(_)));
     // Quota remains available, blocked approval does NOT trigger rate limit
     let quota = harness.check_quota("sess_1").expect("quota check");
@@ -89,8 +91,10 @@ fn test_codex_rate_limits_missing_response_fails_safe() {
     let res = parse_rate_limits_payload(unparsed);
     // If rateLimits payload is completely missing, should report Unknown rather than assuming Available
     match res {
-        Ok(QuotaStatus::Unknown) | Err(_) => {},
-        Ok(QuotaStatus::Available) => panic!("Should not blindly report Available on missing rateLimits payload"),
-        _ => {},
+        Ok(QuotaStatus::Unknown) | Err(_) => {}
+        Ok(QuotaStatus::Available) => {
+            panic!("Should not blindly report Available on missing rateLimits payload")
+        }
+        _ => {}
     }
 }

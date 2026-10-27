@@ -21,11 +21,15 @@ fn test_mock_terminal_adapter_lifecycle() {
             let status = adapter.get_agent_status(&target.pane_id).expect("status");
             assert_eq!(status, AgentStatus::Ready);
 
-            let ack = adapter.send_prompt(&target, "Run tests").expect("send prompt");
+            let ack = adapter
+                .send_prompt(&target, "Run tests")
+                .expect("send prompt");
             assert!(ack.acknowledged);
 
             // Once prompt is sent, mock transitions to Busy
-            let status_after = adapter.get_agent_status(&target.pane_id).expect("status after");
+            let status_after = adapter
+                .get_agent_status(&target.pane_id)
+                .expect("status after");
             assert_eq!(status_after, AgentStatus::Busy);
 
             // Target verification
@@ -36,7 +40,9 @@ fn test_mock_terminal_adapter_lifecycle() {
                 pid: 99999,
                 ..target
             };
-            assert!(!adapter.verify_target_alive(&fake_target).expect("mismatch check"));
+            assert!(!adapter
+                .verify_target_alive(&fake_target)
+                .expect("mismatch check"));
         }
         other => panic!("Expected Exact neighbor, got {:?}", other),
     }

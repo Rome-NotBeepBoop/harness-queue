@@ -131,7 +131,7 @@ fn test_read_prompt_multiline_paste() {
     use harness_queue::cli::{read_prompt_event, InputEvent};
     use std::io::Cursor;
 
-    let input_bytes = b"line 1\nline 2\n\n";
+    let input_bytes = b"line 1\\\nline 2\n";
     let mut input = Cursor::new(input_bytes);
     let mut out = Vec::new();
     let event = read_prompt_event(&mut input, &mut out, "› Prompt: ");

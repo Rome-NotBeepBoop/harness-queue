@@ -16,14 +16,20 @@ impl HarnessAdapter for ClaudeHarness {
         Ok(QuotaStatus::Available)
     }
 
-    fn is_ready(&self, target: &AgentTarget, terminal: &dyn TerminalAdapter) -> Result<AgentReadiness, HarnessError> {
+    fn is_ready(
+        &self,
+        target: &AgentTarget,
+        terminal: &dyn TerminalAdapter,
+    ) -> Result<AgentReadiness, HarnessError> {
         match terminal.get_agent_status(&target.pane_id) {
             Ok(AgentStatus::Ready) => Ok(AgentReadiness::Ready),
             Ok(AgentStatus::Busy) => Ok(AgentReadiness::Busy),
-            Ok(AgentStatus::BlockedApproval) => {
-                Ok(AgentReadiness::BlockedOnApproval("Claude permission dialog pending".to_string()))
-            }
-            Ok(AgentStatus::RateLimited) => Ok(AgentReadiness::Interrupted("Claude rate limit observed".to_string())),
+            Ok(AgentStatus::BlockedApproval) => Ok(AgentReadiness::BlockedOnApproval(
+                "Claude permission dialog pending".to_string(),
+            )),
+            Ok(AgentStatus::RateLimited) => Ok(AgentReadiness::Interrupted(
+                "Claude rate limit observed".to_string(),
+            )),
             _ => Ok(AgentReadiness::Ready),
         }
     }

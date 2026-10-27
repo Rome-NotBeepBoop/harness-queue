@@ -13,6 +13,10 @@ help:
 run *args:
     @-cargo run -q -- {{args}}
 
+# Run hq in interactive TUI mode
+tui *args:
+    @-cargo run -q -- --tui {{args}}
+
 # Run hq in release mode
 run-release *args:
     @-cargo run -q --release -- {{args}}

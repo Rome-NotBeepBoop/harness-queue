@@ -21,11 +21,21 @@ pub fn parse_rate_limits_payload(json_str: &str) -> Result<QuotaStatus, HarnessE
 
     let ordinary_allowed = ordinary_opt.unwrap_or(true);
     let rate_limits = rate_limits_opt.unwrap_or(root);
-    let reached_type = rate_limits.get("rateLimitReachedType").and_then(|t| t.as_str());
-    let spend_control = rate_limits.get("spendControlReached").and_then(|s| s.as_bool()).unwrap_or(false);
+    let reached_type = rate_limits
+        .get("rateLimitReachedType")
+        .and_then(|t| t.as_str());
+    let spend_control = rate_limits
+        .get("spendControlReached")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(false);
 
-    let primary_used = rate_limits.pointer("/primary/usedPercent").and_then(|u| u.as_f64()).unwrap_or(0.0);
-    let resets_at = rate_limits.pointer("/primary/resetsAt").and_then(|r| r.as_u64());
+    let primary_used = rate_limits
+        .pointer("/primary/usedPercent")
+        .and_then(|u| u.as_f64())
+        .unwrap_or(0.0);
+    let resets_at = rate_limits
+        .pointer("/primary/resetsAt")
+        .and_then(|r| r.as_u64());
 
     if !ordinary_allowed || reached_type.is_some() || spend_control || primary_used >= 100.0 {
         let reason = if let Some(rt) = reached_type {
@@ -145,20 +155,26 @@ impl HarnessAdapter for CodexHarness {
         Ok(fresh)
     }
 
-    fn is_ready(&self, target: &AgentTarget, terminal: &dyn TerminalAdapter) -> Result<AgentReadiness, HarnessError> {
+    fn is_ready(
+        &self,
+        target: &AgentTarget,
+        terminal: &dyn TerminalAdapter,
+    ) -> Result<AgentReadiness, HarnessError> {
         match terminal.get_agent_status(&target.pane_id) {
             Ok(AgentStatus::Ready) => Ok(AgentReadiness::Ready),
             Ok(AgentStatus::Busy) => Ok(AgentReadiness::Busy),
-            Ok(AgentStatus::BlockedApproval) => {
-                Ok(AgentReadiness::BlockedOnApproval("User approval prompt active".to_string()))
-            }
+            Ok(AgentStatus::BlockedApproval) => Ok(AgentReadiness::BlockedOnApproval(
+                "User approval prompt active".to_string(),
+            )),
             Ok(AgentStatus::RateLimited) => {
                 // If the structured JSON-RPC API confirms quota is Available, do not let
                 // historical scrollback text in the terminal pane block dispatch!
                 if let Ok(QuotaStatus::Available) = self.check_quota(&target.session_id) {
                     Ok(AgentReadiness::Ready)
                 } else {
-                    Ok(AgentReadiness::Interrupted("Usage limit reached".to_string()))
+                    Ok(AgentReadiness::Interrupted(
+                        "Usage limit reached".to_string(),
+                    ))
                 }
             }
             _ => Ok(AgentReadiness::Ready),

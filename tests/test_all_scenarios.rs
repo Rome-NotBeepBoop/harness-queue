@@ -52,7 +52,10 @@ fn scenario_03_auto_send_accepts_custom_prompt() {
     assert_eq!(sup.queue.len(), 0);
     let id = sup.enqueue_prompt("Finish the Receiving workspace".to_string());
     assert_eq!(id, 1);
-    assert_eq!(sup.queue.get(1).unwrap().prompt, "Finish the Receiving workspace");
+    assert_eq!(
+        sup.queue.get(1).unwrap().prompt,
+        "Finish the Receiving workspace"
+    );
 }
 
 // Scenario 4: Before quota recovery, prompts remain queued.
@@ -70,7 +73,9 @@ fn scenario_04_before_quota_recovery_prompts_remain_queued() {
     sup.enqueue_prompt("Task 1".to_string());
 
     let events = sup.tick().unwrap();
-    assert!(events.iter().any(|e| e.contains("Waiting for quota recovery")));
+    assert!(events
+        .iter()
+        .any(|e| e.contains("Waiting for quota recovery")));
     assert_eq!(sup.queue.get(1).unwrap().status, ItemStatus::Queued);
 }
 
@@ -166,7 +171,9 @@ fn scenario_09_second_prompt_waits_while_agent_is_busy() {
 
     sup.enqueue_prompt("Task 2".to_string());
     let events = sup.tick().unwrap();
-    assert!(events.iter().any(|e| e.contains("Waiting for OpenAI Codex to finish")));
+    assert!(events
+        .iter()
+        .any(|e| e.contains("Waiting for OpenAI Codex to finish")));
     assert_eq!(sup.queue.get(2).unwrap().status, ItemStatus::Queued);
 }
 
@@ -261,7 +268,12 @@ fn scenario_13_no_duplicate_submission() {
     terminal.set_status(AgentStatus::Ready);
     let ev2 = sup.tick().unwrap();
     assert!(ev2.is_empty());
-    assert_eq!(terminal.prompt_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(
+        terminal
+            .prompt_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
 }
 
 // Scenario 14: An approval-blocked agent is not mistaken for rate-limited.
@@ -304,14 +316,26 @@ fn scenario_15_ambiguous_neighboring_pane_never_receives_input() {
 
     struct AmbiguousTerminal(MockTerminalAdapter, Vec<AgentTarget>);
     impl harness_queue::terminal::TerminalAdapter for AmbiguousTerminal {
-        fn terminal_name(&self) -> &'static str { "Ambiguous" }
-        fn is_available(&self) -> bool { true }
-        fn detect_current_pane(&self) -> Result<String, TerminalError> { Ok("w1:p1".to_string()) }
+        fn terminal_name(&self) -> &'static str {
+            "Ambiguous"
+        }
+        fn is_available(&self) -> bool {
+            true
+        }
+        fn detect_current_pane(&self) -> Result<String, TerminalError> {
+            Ok("w1:p1".to_string())
+        }
         fn find_adjacent_agent(&self, _pane: &str) -> Result<NeighborDetection, TerminalError> {
             Ok(NeighborDetection::Ambiguous(self.1.clone()))
         }
-        fn get_agent_status(&self, pane: &str) -> Result<AgentStatus, TerminalError> { self.0.get_agent_status(pane) }
-        fn send_prompt(&self, target: &AgentTarget, prompt: &str) -> Result<harness_queue::terminal::DeliveryAck, TerminalError> {
+        fn get_agent_status(&self, pane: &str) -> Result<AgentStatus, TerminalError> {
+            self.0.get_agent_status(pane)
+        }
+        fn send_prompt(
+            &self,
+            target: &AgentTarget,
+            prompt: &str,
+        ) -> Result<harness_queue::terminal::DeliveryAck, TerminalError> {
             self.0.send_prompt(target, prompt)
         }
         fn verify_target_alive(&self, target: &AgentTarget) -> Result<bool, TerminalError> {
@@ -332,11 +356,14 @@ fn scenario_15_ambiguous_neighboring_pane_never_receives_input() {
 #[test]
 fn scenario_16_clean_detachment() {
     let mut sm = harness_queue::state_machine::StateMachine::new();
-    sm.transition(harness_queue::models::State::SelectingMode).unwrap();
-    sm.transition(harness_queue::models::State::Watching).unwrap();
+    sm.transition(harness_queue::models::State::SelectingMode)
+        .unwrap();
+    sm.transition(harness_queue::models::State::Watching)
+        .unwrap();
 
     // Detach cleanly
-    sm.transition(harness_queue::models::State::Detached).unwrap();
+    sm.transition(harness_queue::models::State::Detached)
+        .unwrap();
     assert_eq!(sm.current(), harness_queue::models::State::Detached);
 }
 

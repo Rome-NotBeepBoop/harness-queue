@@ -236,23 +236,14 @@ pub fn read_prompt_event<R: BufRead, W: Write>(
 
             let mut full_prompt = trimmed.to_string();
 
-            // Read subsequent lines if available immediately (e.g. pasted block)
-            // or if the line ended with an explicit continuation backslash
-            loop {
-                let ends_with_slash = full_prompt.ends_with('\\');
-                if ends_with_slash {
-                    full_prompt.pop(); // remove trailing backslash
-                }
-
-                // Check if more input is available
+            // Read subsequent lines if user ended with continuation backslash '\'
+            while full_prompt.ends_with('\\') {
+                full_prompt.pop(); // remove trailing backslash
                 let mut next_line = String::new();
                 match reader.read_line(&mut next_line) {
                     Ok(0) => break,
                     Ok(_) => {
                         let next_trimmed = next_line.trim_end_matches(&['\r', '\n'][..]);
-                        if next_trimmed.is_empty() {
-                            break;
-                        }
                         full_prompt.push('\n');
                         full_prompt.push_str(next_trimmed);
                     }

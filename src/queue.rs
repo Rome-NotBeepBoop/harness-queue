@@ -16,7 +16,11 @@ impl std::fmt::Display for QueueError {
         match self {
             QueueError::ItemNotFound(id) => write!(f, "Queue item #{} not found", id),
             QueueError::InvalidStateTransition { id, from, to } => {
-                write!(f, "Invalid status change for #{}: {:?} -> {:?}", id, from, to)
+                write!(
+                    f,
+                    "Invalid status change for #{}: {:?} -> {:?}",
+                    id, from, to
+                )
             }
         }
     }
@@ -47,9 +51,18 @@ impl QueueEngine {
     }
 
     pub fn enqueue(&mut self, prompt: String) -> usize {
+        self.enqueue_with_attachments(prompt, None)
+    }
+
+    pub fn enqueue_with_attachments(
+        &mut self,
+        prompt: String,
+        attachments_summary: Option<String>,
+    ) -> usize {
         let id = self.next_id;
         self.next_id += 1;
-        self.items.push_back(QueueItem::new(id, prompt));
+        self.items
+            .push_back(QueueItem::with_attachments(id, prompt, attachments_summary));
         id
     }
 

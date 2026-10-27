@@ -65,7 +65,11 @@ impl TerminalAdapter for MockTerminalAdapter {
         }
     }
 
-    fn send_prompt(&self, target: &AgentTarget, _prompt: &str) -> Result<DeliveryAck, TerminalError> {
+    fn send_prompt(
+        &self,
+        target: &AgentTarget,
+        _prompt: &str,
+    ) -> Result<DeliveryAck, TerminalError> {
         if target.pane_id != self.target.pane_id {
             return Err(TerminalError::NeighborNotFound);
         }
