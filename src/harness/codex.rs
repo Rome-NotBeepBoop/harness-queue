@@ -57,8 +57,17 @@ impl Default for CodexHarness {
 
 impl CodexHarness {
     pub fn new() -> Self {
+        let bin = std::env::var("CODEX_BIN").unwrap_or_else(|_| {
+            if std::path::Path::new("/opt/homebrew/bin/codex").exists() {
+                "/opt/homebrew/bin/codex".to_string()
+            } else if std::path::Path::new("/usr/local/bin/codex").exists() {
+                "/usr/local/bin/codex".to_string()
+            } else {
+                "codex".to_string()
+            }
+        });
         Self {
-            codex_bin: "codex".to_string(),
+            codex_bin: bin,
             last_check: std::sync::Mutex::new(None),
         }
     }
@@ -143,7 +152,15 @@ impl HarnessAdapter for CodexHarness {
             Ok(AgentStatus::BlockedApproval) => {
                 Ok(AgentReadiness::BlockedOnApproval("User approval prompt active".to_string()))
             }
-            Ok(AgentStatus::RateLimited) => Ok(AgentReadiness::Interrupted("Usage limit reached".to_string())),
+            Ok(AgentStatus::RateLimited) => {
+                // If the structured JSON-RPC API confirms quota is Available, do not let
+                // historical scrollback text in the terminal pane block dispatch!
+                if let Ok(QuotaStatus::Available) = self.check_quota(&target.session_id) {
+                    Ok(AgentReadiness::Ready)
+                } else {
+                    Ok(AgentReadiness::Interrupted("Usage limit reached".to_string()))
+                }
+            }
             _ => Ok(AgentReadiness::Ready),
         }
     }

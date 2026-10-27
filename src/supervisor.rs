@@ -116,7 +116,32 @@ impl Supervisor {
                 if !self.reported_waiting_quota {
                     let _ = self.state_machine.transition(State::RateLimited);
                     let _ = self.state_machine.transition(State::WaitingForRecovery);
-                    events.push("◷ Waiting for quota recovery".to_string());
+                    if let Some(ts) = resets_at {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        if ts > now {
+                            let diff = ts - now;
+                            let hours = diff / 3600;
+                            let mins = (diff % 3600) / 60;
+                            if hours > 0 {
+                                events.push(format!(
+                                    "◷ Waiting for quota recovery (resets in {}h {}m)",
+                                    hours, mins
+                                ));
+                            } else {
+                                events.push(format!(
+                                    "◷ Waiting for quota recovery (resets in {}m)",
+                                    mins
+                                ));
+                            }
+                        } else {
+                            events.push("◷ Waiting for quota recovery (reset due)".to_string());
+                        }
+                    } else {
+                        events.push("◷ Waiting for quota recovery".to_string());
+                    }
                     self.reported_waiting_quota = true;
                 }
                 return Ok(events);
