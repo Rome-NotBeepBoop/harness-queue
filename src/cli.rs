@@ -21,6 +21,7 @@ pub fn format_boxed_header(
     terminal_name: &str,
     current_pane: &str,
     target: &AgentTarget,
+    usage_summary: Option<&str>,
 ) -> String {
     let title = "Harness Queue (hq) v0.1";
     let host_line = format!(
@@ -42,8 +43,13 @@ pub fn format_boxed_header(
             target.short_session_id()
         )
     };
+    let worktree_line = format!("Worktree: {}", target.cwd);
 
-    let content_lines = [title, &host_line, &target_detail];
+    let mut content_lines = vec![title.to_string(), host_line, target_detail, worktree_line];
+    if let Some(usage) = usage_summary {
+        content_lines.push(format!("Usage: {}", usage));
+    }
+
     let max_len = content_lines
         .iter()
         .map(|l| l.chars().count())

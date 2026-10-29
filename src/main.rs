@@ -243,8 +243,15 @@ fn main() {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
+    let usage_summary = harness.get_usage_summary(&target, terminal.as_ref());
+
     // Render clean boxed header
-    let header = format_boxed_header(terminal.terminal_name(), &current_pane, &target);
+    let header = format_boxed_header(
+        terminal.terminal_name(),
+        &current_pane,
+        &target,
+        usage_summary.as_deref(),
+    );
     let _ = writeln!(out, "\n{}", header);
     let _ = out.flush();
 
@@ -298,6 +305,10 @@ fn main() {
                 target.harness.display_name(),
                 target.short_session_id()
             );
+            if let Some(ref usage) = usage_summary {
+                let _ = writeln!(out, "  {}", usage);
+            }
+            let _ = writeln!(out);
             supervisor.enqueue_prompt(DEFAULT_CONTINUATION_PROMPT.to_string());
         }
         Mode::AutoSend => {
@@ -321,6 +332,10 @@ fn main() {
                 target.harness.display_name(),
                 target.short_session_id()
             );
+            if let Some(ref usage) = usage_summary {
+                let _ = writeln!(out, "  {}", usage);
+            }
+            let _ = writeln!(out);
         }
     }
     let _ = out.flush();
@@ -452,6 +467,46 @@ fn main() {
                                         }
                                     }
                                 }
+                                input_buffer.clear();
+                                cursor_idx = 0;
+                                render_cli_prompt(&mut stdout, None, &input_buffer, cursor_idx);
+                            } else if trimmed == "status" {
+                                let state_str = format!("{:?}", supervisor.state_machine.current());
+                                let usage_str = supervisor.get_target_usage_summary();
+                                let _ = write!(stdout, "\r\x1b[KStatus: {}", state_str);
+                                if let Some(ref u) = usage_str {
+                                    let _ = write!(stdout, "  •  Usage: {}", u);
+                                }
+                                let _ = write!(stdout, "\r\n\r\n");
+                                input_buffer.clear();
+                                cursor_idx = 0;
+                                render_cli_prompt(&mut stdout, None, &input_buffer, cursor_idx);
+                            } else if trimmed == "queue" || trimmed == "list" {
+                                let items = supervisor.queue.all_items();
+                                let _ = write!(stdout, "\r\x1b[KPrompt Queue ({}):\r\n", items.len());
+                                if items.is_empty() {
+                                    let _ = write!(stdout, "  (No prompts in queue)\r\n");
+                                } else {
+                                    for it in items {
+                                        let status_badge = match it.status {
+                                            ItemStatus::Queued => "[⏳ QUEUED]",
+                                            ItemStatus::Submitting => "[➤ SENDING]",
+                                            ItemStatus::Acknowledged => "[✓ SENT]",
+                                            ItemStatus::Uncertain => "[! UNCERTAIN]",
+                                        };
+                                        let attach = if let Some(ref a) = it.attachments_summary {
+                                            format!(" ({})", a)
+                                        } else {
+                                            "".to_string()
+                                        };
+                                        let _ = write!(
+                                            stdout,
+                                            "  {} #{} {}{}\r\n",
+                                            status_badge, it.id, it.prompt, attach
+                                        );
+                                    }
+                                }
+                                let _ = write!(stdout, "\r\n");
                                 input_buffer.clear();
                                 cursor_idx = 0;
                                 render_cli_prompt(&mut stdout, None, &input_buffer, cursor_idx);

@@ -37,11 +37,13 @@ fn test_format_boxed_header_and_guide() {
         cwd: "/Users/romey/Developer/Hestia".to_string(),
     };
 
-    let header = format_boxed_header("Orca IDE", "term_d5d8770b-718b-4c1f", &target);
+    let header = format_boxed_header("Orca IDE", "term_d5d8770b-718b-4c1f", &target, Some("Antigravity: Active · Quota available"));
     assert!(header.contains("Harness Queue (hq) v0.1"));
     assert!(header.contains("Host: Orca IDE"));
     assert!(header.contains("Location: term_d5d8770b"));
     assert!(header.contains("Target: OpenAI Codex (term_7b2d3b68)"));
+    assert!(header.contains("Worktree: /Users/romey/Developer/Hestia"));
+    assert!(header.contains("Usage: Antigravity: Active · Quota available"));
     assert!(header.starts_with('┌'));
     assert!(header.ends_with('┘'));
 
