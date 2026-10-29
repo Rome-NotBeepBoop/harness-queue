@@ -14,7 +14,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
+    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap},
     Terminal,
 };
 use std::io::{self, stdout};
@@ -324,8 +324,17 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
         terminal.draw(|f| {
             let size = f.area();
 
+            let usage_summary = app.supervisor.get_target_usage_summary();
+            let header_height = if size.height < 24 {
+                if usage_summary.is_some() { 7 } else { 6 }
+            } else if usage_summary.is_some() {
+                8
+            } else {
+                7
+            };
+
             // Main vertical layout:
-            // 1. Header (height: 4)
+            // 1. Header (height: header_height)
             // 2. Middle: Queue (left) & Logs (right)
             // 3. Input Box (height: 3)
             // 4. Footer (height: 1)
@@ -333,24 +342,12 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([
-                    Constraint::Length(4),
+                    Constraint::Length(header_height),
                     Constraint::Min(8),
                     Constraint::Length(3),
                     Constraint::Length(1),
                 ])
                 .split(size);
-
-            // 1. Header
-            let target_desc = if let Some(target) = &app.supervisor.target {
-                format!(
-                    "Target: {} ({})  •  Worktree: {}",
-                    target.harness.display_name(),
-                    target.short_session_id(),
-                    target.cwd
-                )
-            } else {
-                "Target: None".to_string()
-            };
 
             let state_badge = match app.supervisor.state_machine.current() {
                 State::Watching => Span::styled(
@@ -415,32 +412,72 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
                 _ => Span::styled(" ● ACTIVE ", Style::default().fg(Color::Blue)),
             };
 
-            let header_lines = vec![
-                Line::from(vec![
+            let mut header_lines = Vec::new();
+
+            // Line 1: App title & Host
+            header_lines.push(Line::from(vec![
+                Span::styled(
+                    "Harness Queue (hq) v0.1",
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  •  Host: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    app.supervisor.terminal.terminal_name(),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]));
+
+            // Line 2: Mode & Status
+            header_lines.push(Line::from(vec![
+                Span::styled("Mode: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    app.supervisor.mode.as_str(),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::styled("  •  Status: ", Style::default().fg(Color::DarkGray)),
+                state_badge,
+            ]));
+
+            // Line 3: Target
+            if let Some(target) = &app.supervisor.target {
+                header_lines.push(Line::from(vec![
+                    Span::styled("Target: ", Style::default().fg(Color::DarkGray)),
                     Span::styled(
-                        "Harness Queue (hq) v0.1",
+                        format!(
+                            "{} ({})",
+                            target.harness.display_name(),
+                            target.short_session_id()
+                        ),
+                        Style::default().fg(Color::White),
+                    ),
+                ]));
+
+                // Line 4: Worktree
+                header_lines.push(Line::from(vec![
+                    Span::styled("Worktree: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(&target.cwd, Style::default().fg(Color::DarkGray)),
+                ]));
+            } else {
+                header_lines.push(Line::from(vec![
+                    Span::styled("Target: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("None", Style::default().fg(Color::DarkGray)),
+                ]));
+            }
+
+            // Line 5: Usage (Codex, Claude Code, AGY only)
+            if let Some(ref usage) = usage_summary {
+                header_lines.push(Line::from(vec![
+                    Span::styled("Usage: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        usage,
                         Style::default()
-                            .fg(Color::White)
+                            .fg(Color::LightCyan)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::raw("  •  Host: "),
-                    Span::styled(
-                        app.supervisor.terminal.terminal_name(),
-                        Style::default().fg(Color::Yellow),
-                    ),
-                    Span::raw("  •  Mode: "),
-                    Span::styled(
-                        app.supervisor.mode.as_str(),
-                        Style::default().fg(Color::Cyan),
-                    ),
-                    Span::raw("  •  Status: "),
-                    state_badge,
-                ]),
-                Line::from(Span::styled(
-                    target_desc,
-                    Style::default().fg(Color::DarkGray),
-                )),
-            ];
+                ]));
+            }
 
             let header_block = Block::default()
                 .borders(Borders::ALL)
@@ -452,7 +489,9 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
                         .fg(Color::White)
                         .add_modifier(Modifier::BOLD),
                 ));
-            let header_paragraph = Paragraph::new(header_lines).block(header_block);
+            let header_paragraph = Paragraph::new(header_lines)
+                .block(header_block)
+                .wrap(Wrap { trim: true });
             f.render_widget(header_paragraph, chunks[0]);
 
             // 2. Middle: Queue (left) & Logs (right)
