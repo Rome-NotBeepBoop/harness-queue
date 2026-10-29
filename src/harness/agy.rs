@@ -26,9 +26,6 @@ impl HarnessAdapter for AgyHarness {
             Ok(AgentStatus::BlockedApproval) => Ok(AgentReadiness::BlockedOnApproval(
                 "Antigravity user input required".to_string(),
             )),
-            Ok(AgentStatus::RateLimited) => Ok(AgentReadiness::Interrupted(
-                "Antigravity rate limited".to_string(),
-            )),
             _ => Ok(AgentReadiness::Ready),
         }
     }
@@ -59,21 +56,6 @@ impl HarnessAdapter for AgyHarness {
         terminal: &dyn TerminalAdapter,
     ) -> Option<String> {
         let status = terminal.get_agent_status(&target.pane_id).ok();
-        let preview = terminal.get_agent_preview(&target.pane_id);
-
-        if let Some(AgentStatus::RateLimited) = status {
-            return Some("Antigravity: Rate limited · Waiting for quota recovery".to_string());
-        }
-
-        if let Some(prev) = preview {
-            let prev_lower = prev.to_lowercase();
-            if prev_lower.contains("rate limit") || prev_lower.contains("429") {
-                return Some("Antigravity: Rate limited · Waiting for quota recovery".to_string());
-            }
-            if prev_lower.contains("thinking level:") {
-                return Some("Antigravity: Active · Quota available".to_string());
-            }
-        }
 
         match status {
             Some(AgentStatus::Busy) => Some("Antigravity: Busy · Active turn".to_string()),

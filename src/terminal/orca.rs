@@ -394,16 +394,17 @@ impl TerminalAdapter for OrcaAdapter {
             Err(_) => return Ok(AgentStatus::Unknown),
         };
         if let Some(target) = terminals.iter().find(|t| t.handle == pane_id) {
-            let preview_lower = target.preview.to_lowercase();
-            if preview_lower.contains("usage limit") || preview_lower.contains("rate limit") {
-                return Ok(AgentStatus::RateLimited);
+            if !target.connected {
+                return Ok(AgentStatus::Unknown);
             }
+            let preview_lower = target.preview.to_lowercase();
             if preview_lower.contains("do you want to proceed")
                 || preview_lower.contains("approve?")
+                || preview_lower.contains("[y/n]")
             {
                 return Ok(AgentStatus::BlockedApproval);
             }
-            if target.connected && target.writable {
+            if target.writable {
                 return Ok(AgentStatus::Ready);
             }
         }

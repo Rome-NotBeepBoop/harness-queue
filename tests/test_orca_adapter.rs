@@ -215,3 +215,39 @@ fn test_parse_orca_terminal_with_lone_surrogates() {
     assert_eq!(terminals.len(), 1);
     assert_eq!(terminals[0].handle, "term_pi");
 }
+
+#[test]
+fn test_agy_and_orca_not_falsely_rate_limited_by_scrollback() {
+    use harness_queue::harness::agy::AgyHarness;
+    use harness_queue::harness::HarnessAdapter;
+    use harness_queue::models::{AgentTarget, HarnessKind};
+    use harness_queue::terminal::mock::MockTerminalAdapter;
+    use std::sync::Arc;
+
+    let target = AgentTarget {
+        terminal_id: "term_0937adc6".to_string(),
+        pane_id: "term_0937adc6".to_string(),
+        pid: 1234,
+        harness: HarnessKind::Agy,
+        session_id: "term_0937adc6".to_string(),
+        cwd: "/Users/romey/Developer/harness-queue".to_string(),
+    };
+
+    let agy = AgyHarness;
+    let mock_terminal = Arc::new(MockTerminalAdapter::new());
+
+    // Even if terminal scrollback preview contains words like "rate limit", "usage limit", or "429"
+    // (e.g. from cargo tests or git commits), Antigravity must never falsely report rate limited or interrupted!
+    let readiness = agy.is_ready(&target, mock_terminal.as_ref()).unwrap();
+    assert!(
+        matches!(readiness, harness_queue::harness::AgentReadiness::Ready),
+        "Antigravity must be Ready and never interrupted by false rate limits"
+    );
+
+    let usage = agy.get_usage_summary(&target, mock_terminal.as_ref());
+    assert!(usage.is_some());
+    assert!(
+        usage.unwrap().contains("Quota available"),
+        "Usage summary must show Quota available"
+    );
+}

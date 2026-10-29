@@ -27,9 +27,6 @@ impl HarnessAdapter for ClaudeHarness {
             Ok(AgentStatus::BlockedApproval) => Ok(AgentReadiness::BlockedOnApproval(
                 "Claude permission dialog pending".to_string(),
             )),
-            Ok(AgentStatus::RateLimited) => Ok(AgentReadiness::Interrupted(
-                "Claude rate limit observed".to_string(),
-            )),
             _ => Ok(AgentReadiness::Ready),
         }
     }
@@ -62,15 +59,7 @@ impl HarnessAdapter for ClaudeHarness {
         let status = terminal.get_agent_status(&target.pane_id).ok();
         let preview = terminal.get_agent_preview(&target.pane_id);
 
-        if let Some(AgentStatus::RateLimited) = status {
-            return Some("Claude Code: Rate limit observed · Waiting for recovery".to_string());
-        }
-
         if let Some(prev) = preview {
-            let prev_lower = prev.to_lowercase();
-            if prev_lower.contains("rate limit") {
-                return Some("Claude Code: Rate limit observed · Waiting".to_string());
-            }
             if let Some(pct_idx) = prev.find('%') {
                 let start = prev[..pct_idx].rfind(' ').map(|i| i + 1).unwrap_or(0);
                 let end = prev[pct_idx..]
