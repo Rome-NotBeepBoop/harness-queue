@@ -97,6 +97,14 @@ impl Supervisor {
             .map_err(|e| e.to_string())
     }
 
+    pub fn get_target_usage_summary(&self) -> Option<String> {
+        if let Some(target) = &self.target {
+            self.harness.get_usage_summary(target, self.terminal.as_ref())
+        } else {
+            None
+        }
+    }
+
     pub fn tick(&mut self) -> Result<Vec<String>, String> {
         let target = match &self.target {
             Some(t) => t.clone(),

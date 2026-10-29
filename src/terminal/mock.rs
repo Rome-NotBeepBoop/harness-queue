@@ -9,6 +9,7 @@ pub struct MockTerminalAdapter {
     pub target: AgentTarget,
     pub status: Mutex<AgentStatus>,
     pub prompt_count: AtomicU32,
+    pub preview: Mutex<Option<String>>,
 }
 
 impl Default for MockTerminalAdapter {
@@ -31,12 +32,18 @@ impl MockTerminalAdapter {
             },
             status: Mutex::new(AgentStatus::Ready),
             prompt_count: AtomicU32::new(0),
+            preview: Mutex::new(None),
         }
     }
 
     pub fn set_status(&self, new_status: AgentStatus) {
         let mut s = self.status.lock().unwrap();
         *s = new_status;
+    }
+
+    pub fn set_preview(&self, preview: Option<String>) {
+        let mut p = self.preview.lock().unwrap();
+        *p = preview;
     }
 }
 
@@ -83,5 +90,9 @@ impl TerminalAdapter for MockTerminalAdapter {
 
     fn verify_target_alive(&self, target: &AgentTarget) -> Result<bool, TerminalError> {
         Ok(target.pid == self.target.pid && target.pane_id == self.target.pane_id)
+    }
+
+    fn get_agent_preview(&self, _pane_id: &str) -> Option<String> {
+        self.preview.lock().unwrap().clone()
     }
 }

@@ -452,4 +452,12 @@ impl TerminalAdapter for OrcaAdapter {
             .iter()
             .any(|t| t.handle == target.terminal_id && t.connected))
     }
+
+    fn get_agent_preview(&self, pane_id: &str) -> Option<String> {
+        let terminals = self.list_terminals().ok()?;
+        terminals
+            .into_iter()
+            .find(|t| t.handle == pane_id)
+            .map(|t| t.preview)
+    }
 }

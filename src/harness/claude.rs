@@ -53,4 +53,40 @@ impl HarnessAdapter for ClaudeHarness {
             level: SupportLevel::Partial,
         }
     }
+
+    fn get_usage_summary(
+        &self,
+        target: &AgentTarget,
+        terminal: &dyn TerminalAdapter,
+    ) -> Option<String> {
+        let status = terminal.get_agent_status(&target.pane_id).ok();
+        let preview = terminal.get_agent_preview(&target.pane_id);
+
+        if let Some(AgentStatus::RateLimited) = status {
+            return Some("Claude Code: Rate limit observed · Waiting for recovery".to_string());
+        }
+
+        if let Some(prev) = preview {
+            let prev_lower = prev.to_lowercase();
+            if prev_lower.contains("rate limit") {
+                return Some("Claude Code: Rate limit observed · Waiting".to_string());
+            }
+            if let Some(pct_idx) = prev.find('%') {
+                let start = prev[..pct_idx].rfind(' ').map(|i| i + 1).unwrap_or(0);
+                let end = prev[pct_idx..].find(' ').map(|i| pct_idx + i).unwrap_or(prev.len());
+                let snippet = prev[start..end].trim();
+                if snippet.contains('%') {
+                    return Some(format!("Claude Code: {} tokens · Ready", snippet));
+                }
+            }
+        }
+
+        match status {
+            Some(AgentStatus::Busy) => Some("Claude Code: Busy · Active turn".to_string()),
+            Some(AgentStatus::BlockedApproval) => {
+                Some("Claude Code: Blocked on user approval".to_string())
+            }
+            _ => Some("Claude Code: Active · Ready (no limit observed)".to_string()),
+        }
+    }
 }

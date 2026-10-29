@@ -61,4 +61,7 @@ pub trait TerminalAdapter: Send + Sync {
     fn send_prompt(&self, target: &AgentTarget, prompt: &str)
         -> Result<DeliveryAck, TerminalError>;
     fn verify_target_alive(&self, target: &AgentTarget) -> Result<bool, TerminalError>;
+    fn get_agent_preview(&self, _pane_id: &str) -> Option<String> {
+        None
+    }
 }

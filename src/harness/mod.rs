@@ -80,6 +80,13 @@ pub trait HarnessAdapter: Send + Sync {
         terminal: &dyn TerminalAdapter,
     ) -> Result<DeliveryAck, HarnessError>;
     fn capabilities(&self) -> HarnessCapabilities;
+    fn get_usage_summary(
+        &self,
+        _target: &AgentTarget,
+        _terminal: &dyn TerminalAdapter,
+    ) -> Option<String> {
+        None
+    }
 }
 
 pub fn create_harness_adapter(kind: &HarnessKind) -> Box<dyn HarnessAdapter> {

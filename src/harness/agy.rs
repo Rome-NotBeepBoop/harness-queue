@@ -52,4 +52,35 @@ impl HarnessAdapter for AgyHarness {
             level: SupportLevel::Partial,
         }
     }
+
+    fn get_usage_summary(
+        &self,
+        target: &AgentTarget,
+        terminal: &dyn TerminalAdapter,
+    ) -> Option<String> {
+        let status = terminal.get_agent_status(&target.pane_id).ok();
+        let preview = terminal.get_agent_preview(&target.pane_id);
+
+        if let Some(AgentStatus::RateLimited) = status {
+            return Some("Antigravity: Rate limited · Waiting for quota recovery".to_string());
+        }
+
+        if let Some(prev) = preview {
+            let prev_lower = prev.to_lowercase();
+            if prev_lower.contains("rate limit") || prev_lower.contains("429") {
+                return Some("Antigravity: Rate limited · Waiting for quota recovery".to_string());
+            }
+            if prev_lower.contains("thinking level:") {
+                return Some("Antigravity: Active · Quota available".to_string());
+            }
+        }
+
+        match status {
+            Some(AgentStatus::Busy) => Some("Antigravity: Busy · Active turn".to_string()),
+            Some(AgentStatus::BlockedApproval) => {
+                Some("Antigravity: Blocked on user approval".to_string())
+            }
+            _ => Some("Antigravity: Active · Quota available".to_string()),
+        }
+    }
 }
