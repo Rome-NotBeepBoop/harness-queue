@@ -1,5 +1,5 @@
 use crate::image::{describe_attachments, extract_image_references, format_prompt_with_images};
-use crate::models::{ItemStatus, State};
+use crate::models::{AgentTarget, ItemStatus, State};
 use crate::supervisor::Supervisor;
 use crossterm::{
     event::{
@@ -309,6 +309,138 @@ impl Drop for TerminalCleanup {
     }
 }
 
+struct HeaderItem<'a> {
+    spans: Vec<Span<'a>>,
+    width: usize,
+}
+
+fn pack_header_group<'a>(items: Vec<HeaderItem<'a>>, inner_width: usize) -> Vec<Line<'a>> {
+    let mut lines = Vec::new();
+    let mut current_spans: Vec<Span<'a>> = Vec::new();
+    let mut current_width = 0;
+    let sep_str = "  •  ";
+    let sep_len = 5;
+
+    for item in items {
+        if current_spans.is_empty() {
+            current_width = item.width;
+            current_spans = item.spans;
+        } else if current_width + sep_len + item.width <= inner_width {
+            current_spans.push(Span::styled(sep_str, Style::default().fg(Color::DarkGray)));
+            current_spans.extend(item.spans);
+            current_width += sep_len + item.width;
+        } else {
+            lines.push(Line::from(current_spans));
+            current_width = item.width;
+            current_spans = item.spans;
+        }
+    }
+
+    if !current_spans.is_empty() {
+        lines.push(Line::from(current_spans));
+    }
+
+    lines
+}
+
+pub fn compute_header_lines<'a>(
+    terminal_name: &'a str,
+    mode_str: &'a str,
+    state_badge: Span<'a>,
+    state_badge_len: usize,
+    target: Option<&'a AgentTarget>,
+    usage_summary: Option<&'a str>,
+    inner_width: usize,
+) -> Vec<Line<'a>> {
+    let item_title = HeaderItem {
+        spans: vec![Span::styled(
+            "Harness Queue (hq) v0.1",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )],
+        width: 23,
+    };
+
+    let item_host = HeaderItem {
+        spans: vec![
+            Span::styled("Host: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(terminal_name, Style::default().fg(Color::Yellow)),
+        ],
+        width: 6 + terminal_name.chars().count(),
+    };
+
+    let item_mode = HeaderItem {
+        spans: vec![
+            Span::styled("Mode: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(mode_str, Style::default().fg(Color::Cyan)),
+        ],
+        width: 6 + mode_str.chars().count(),
+    };
+
+    let item_status = HeaderItem {
+        spans: vec![
+            Span::styled("Status: ", Style::default().fg(Color::DarkGray)),
+            state_badge,
+        ],
+        width: 8 + state_badge_len,
+    };
+
+    let group1 = vec![item_title, item_host, item_mode, item_status];
+
+    let mut group2 = Vec::new();
+    if let Some(t) = target {
+        let target_display = format!("{} ({})", t.harness.display_name(), t.short_session_id());
+        let target_width = 8 + target_display.chars().count();
+        group2.push(HeaderItem {
+            spans: vec![
+                Span::styled("Target: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(target_display, Style::default().fg(Color::White)),
+            ],
+            width: target_width,
+        });
+
+        let cwd_width = 10 + t.cwd.chars().count();
+        group2.push(HeaderItem {
+            spans: vec![
+                Span::styled("Worktree: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(t.cwd.clone(), Style::default().fg(Color::DarkGray)),
+            ],
+            width: cwd_width,
+        });
+    } else {
+        group2.push(HeaderItem {
+            spans: vec![
+                Span::styled("Target: ", Style::default().fg(Color::DarkGray)),
+                Span::styled("None", Style::default().fg(Color::DarkGray)),
+            ],
+            width: 12,
+        });
+    }
+
+    if let Some(usage) = usage_summary {
+        let usage_width = 7 + usage.chars().count();
+        group2.push(HeaderItem {
+            spans: vec![
+                Span::styled("Usage: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    usage.to_string(),
+                    Style::default()
+                        .fg(Color::LightCyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ],
+            width: usage_width,
+        });
+    }
+
+    let mut header_lines = pack_header_group(group1, inner_width);
+    let mut group2_lines = pack_header_group(group2, inner_width);
+    header_lines.append(&mut group2_lines);
+
+    header_lines
+}
+
 pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
     enable_raw_mode()?;
     let mut stdout = stdout();
@@ -323,66 +455,54 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
     while app.running {
         terminal.draw(|f| {
             let size = f.area();
-
+            let inner_width = (size.width.saturating_sub(4)).max(20) as usize;
             let usage_summary = app.supervisor.get_target_usage_summary();
-            let header_height = if size.height < 24 {
-                if usage_summary.is_some() {
-                    7
-                } else {
-                    6
-                }
-            } else if usage_summary.is_some() {
-                8
-            } else {
-                7
-            };
 
-            // Main vertical layout:
-            // 1. Header (height: header_height)
-            // 2. Middle: Queue (left) & Logs (right)
-            // 3. Input Box (height: 3)
-            // 4. Footer (height: 1)
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .margin(1)
-                .constraints([
-                    Constraint::Length(header_height),
-                    Constraint::Min(8),
-                    Constraint::Length(3),
-                    Constraint::Length(1),
-                ])
-                .split(size);
-
-            let state_badge = match app.supervisor.state_machine.current() {
-                State::Watching => Span::styled(
-                    " ● WATCHING ",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
+            let (state_badge, state_badge_len) = match app.supervisor.state_machine.current() {
+                State::Watching => (
+                    Span::styled(
+                        " ● WATCHING ",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    12,
                 ),
-                State::AgentBusy => Span::styled(
-                    " ⚙️ BUSY ",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
+                State::AgentBusy => (
+                    Span::styled(
+                        " ⚙️ BUSY ",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    9,
                 ),
-                State::AgentReady => Span::styled(
-                    " ✓ READY ",
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
+                State::AgentReady => (
+                    Span::styled(
+                        " ✓ READY ",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    9,
                 ),
-                State::Submitting => Span::styled(
-                    " ➤ SENDING ",
-                    Style::default()
-                        .fg(Color::Magenta)
-                        .add_modifier(Modifier::BOLD),
+                State::Submitting => (
+                    Span::styled(
+                        " ➤ SENDING ",
+                        Style::default()
+                            .fg(Color::Magenta)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    11,
                 ),
-                State::PromptAcknowledged => Span::styled(
-                    " ✓ DELIVERED ",
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
+                State::PromptAcknowledged => (
+                    Span::styled(
+                        " ✓ DELIVERED ",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    13,
                 ),
                 State::RateLimited | State::WaitingForRecovery => {
                     let reset_text = if let Some(ts) = app.supervisor.quota_resets_at {
@@ -399,89 +519,66 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
                     } else {
                         " ⏳ QUOTA WAIT ".to_string()
                     };
-                    Span::styled(
-                        reset_text,
-                        Style::default()
-                            .fg(Color::LightRed)
-                            .add_modifier(Modifier::BOLD),
+                    let len = reset_text.chars().count();
+                    (
+                        Span::styled(
+                            reset_text,
+                            Style::default()
+                                .fg(Color::LightRed)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        len,
                     )
                 }
-                State::DeliveryUncertain => Span::styled(
-                    " ! UNCERTAIN ",
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                State::DeliveryUncertain => (
+                    Span::styled(
+                        " ! UNCERTAIN ",
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    ),
+                    13,
                 ),
-                State::Detached => {
-                    Span::styled(" ✓ DETACHED ", Style::default().fg(Color::DarkGray))
-                }
-                _ => Span::styled(" ● ACTIVE ", Style::default().fg(Color::Blue)),
+                State::Detached => (
+                    Span::styled(" ✓ DETACHED ", Style::default().fg(Color::DarkGray)),
+                    12,
+                ),
+                _ => (
+                    Span::styled(" ● ACTIVE ", Style::default().fg(Color::Blue)),
+                    10,
+                ),
             };
 
-            let mut header_lines = Vec::new();
-
-            // Line 1: App title & Host
-            header_lines.push(Line::from(vec![
-                Span::styled(
-                    "Harness Queue (hq) v0.1",
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("  •  Host: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    app.supervisor.terminal.terminal_name(),
-                    Style::default().fg(Color::Yellow),
-                ),
-            ]));
-
-            // Line 2: Mode & Status
-            header_lines.push(Line::from(vec![
-                Span::styled("Mode: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    app.supervisor.mode.as_str(),
-                    Style::default().fg(Color::Cyan),
-                ),
-                Span::styled("  •  Status: ", Style::default().fg(Color::DarkGray)),
+            let header_lines = compute_header_lines(
+                app.supervisor.terminal.terminal_name(),
+                app.supervisor.mode.as_str(),
                 state_badge,
-            ]));
+                state_badge_len,
+                app.supervisor.target.as_ref(),
+                usage_summary.as_deref(),
+                inner_width,
+            );
 
-            // Line 3: Target
-            if let Some(target) = &app.supervisor.target {
-                header_lines.push(Line::from(vec![
-                    Span::styled("Target: ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(
-                        format!(
-                            "{} ({})",
-                            target.harness.display_name(),
-                            target.short_session_id()
-                        ),
-                        Style::default().fg(Color::White),
-                    ),
-                ]));
+            let total_rows: usize = header_lines
+                .iter()
+                .map(|line| line.width().div_ceil(inner_width).max(1))
+                .sum();
 
-                // Line 4: Worktree
-                header_lines.push(Line::from(vec![
-                    Span::styled("Worktree: ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(&target.cwd, Style::default().fg(Color::DarkGray)),
-                ]));
-            } else {
-                header_lines.push(Line::from(vec![
-                    Span::styled("Target: ", Style::default().fg(Color::DarkGray)),
-                    Span::styled("None", Style::default().fg(Color::DarkGray)),
-                ]));
-            }
+            let header_height = (total_rows as u16 + 2).min(size.height.saturating_sub(6));
 
-            // Line 5: Usage (Codex, Claude Code, AGY only)
-            if let Some(ref usage) = usage_summary {
-                header_lines.push(Line::from(vec![
-                    Span::styled("Usage: ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(
-                        usage,
-                        Style::default()
-                            .fg(Color::LightCyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-            }
+            // Main vertical layout:
+            // 1. Header (height: header_height, dynamically computed from rows needed)
+            // 2. Middle: Queue (left) & Logs (right)
+            // 3. Input Box (height: 3)
+            // 4. Footer (height: 1)
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([
+                    Constraint::Length(header_height),
+                    Constraint::Min(4),
+                    Constraint::Length(3),
+                    Constraint::Length(1),
+                ])
+                .split(size);
 
             let header_block = Block::default()
                 .borders(Borders::ALL)

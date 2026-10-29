@@ -27,3 +27,54 @@ fn test_tui_app_initialization_and_usage() {
     assert!(usage.is_some());
     assert!(usage.unwrap().contains("Antigravity"));
 }
+
+#[test]
+fn test_compute_header_lines_wide_screen_is_two_liner() {
+    use harness_queue::tui::app::compute_header_lines;
+    use ratatui::style::Style;
+    use ratatui::text::Span;
+
+    let target = AgentTarget {
+        terminal_id: "term_tui_1".to_string(),
+        pane_id: "pane_tui_1".to_string(),
+        pid: 200,
+        harness: HarnessKind::Agy,
+        session_id: "term_bbda9ebd".to_string(),
+        cwd: "/Users/romey/Developer/harness-queue".to_string(),
+    };
+
+    let badge = Span::styled(" ✓ READY ", Style::default());
+    let badge_len = 9;
+
+    // Big screen (width 160)
+    let wide_lines = compute_header_lines(
+        "Orca IDE",
+        "Auto-send",
+        badge.clone(),
+        badge_len,
+        Some(&target),
+        Some("Antigravity: Active · Quota available"),
+        160,
+    );
+    assert_eq!(
+        wide_lines.len(),
+        2,
+        "When terminal is big/wide, Session Overview must be exactly a 2-liner!"
+    );
+
+    // Narrow screen (split pane width 50)
+    let narrow_lines = compute_header_lines(
+        "Orca IDE",
+        "Auto-send",
+        badge,
+        badge_len,
+        Some(&target),
+        Some("Antigravity: Active · Quota available"),
+        50,
+    );
+    assert!(
+        narrow_lines.len() >= 4,
+        "When terminal is narrow, info must autofall below onto new lines! Found: {}",
+        narrow_lines.len()
+    );
+}
