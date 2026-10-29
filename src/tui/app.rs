@@ -1,5 +1,5 @@
 use crate::image::{describe_attachments, extract_image_references, format_prompt_with_images};
-use crate::models::{AgentTarget, ItemStatus, State};
+use crate::models::{AgentTarget, ItemStatus, QueueItem, State};
 use crate::supervisor::Supervisor;
 use crossterm::{
     event::{
@@ -251,13 +251,10 @@ impl<'a> TuiApp<'a> {
                 && row < self.queue_rect.y + self.queue_rect.height.saturating_sub(1)
             {
                 let relative_row = (row - self.queue_rect.y - 1) as usize;
+                let inner_width = self.queue_rect.width.saturating_sub(2) as usize;
                 let mut current_row = 0;
                 for item in self.supervisor.queue.all_items() {
-                    let item_height = if item.attachments_summary.is_some() {
-                        2
-                    } else {
-                        1
-                    };
+                    let item_height = compute_item_height(item, inner_width);
                     if relative_row >= current_row && relative_row < current_row + item_height {
                         if item.status == ItemStatus::Queued {
                             self.start_editing(item.id);
@@ -441,6 +438,242 @@ pub fn compute_header_lines<'a>(
     header_lines
 }
 
+fn safe_char_take(s: &str, max_chars: usize) -> (&str, &str) {
+    if max_chars == 0 {
+        return ("", s);
+    }
+    match s.char_indices().nth(max_chars) {
+        Some((byte_idx, _)) => (&s[..byte_idx], &s[byte_idx..]),
+        None => (s, ""),
+    }
+}
+
+pub fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 {
+        return vec![text.to_string()];
+    }
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return vec![String::new()];
+    }
+
+    let mut lines = Vec::new();
+    let mut current_line = String::new();
+    let mut current_len = 0;
+
+    for word in trimmed.split_whitespace() {
+        let word_chars = word.chars().count();
+        if current_line.is_empty() {
+            if word_chars <= max_width {
+                current_line.push_str(word);
+                current_len = word_chars;
+            } else {
+                let mut rem = word;
+                while !rem.is_empty() {
+                    let (head, tail) = safe_char_take(rem, max_width);
+                    if tail.is_empty() {
+                        current_line.push_str(head);
+                        current_len = head.chars().count();
+                    } else {
+                        lines.push(head.to_string());
+                    }
+                    rem = tail;
+                }
+            }
+        } else if current_len + 1 + word_chars <= max_width {
+            current_line.push(' ');
+            current_line.push_str(word);
+            current_len += 1 + word_chars;
+        } else {
+            lines.push(current_line);
+            current_line = String::new();
+            current_len = 0;
+
+            if word_chars <= max_width {
+                current_line.push_str(word);
+                current_len = word_chars;
+            } else {
+                let mut rem = word;
+                while !rem.is_empty() {
+                    let (head, tail) = safe_char_take(rem, max_width);
+                    if tail.is_empty() {
+                        current_line.push_str(head);
+                        current_len = head.chars().count();
+                    } else {
+                        lines.push(head.to_string());
+                    }
+                    rem = tail;
+                }
+            }
+        }
+    }
+
+    if !current_line.is_empty() {
+        lines.push(current_line);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+pub fn wrap_log_line(log_str: &str, max_width: usize) -> Vec<Line<'static>> {
+    let style = if log_str.contains('✓') {
+        Style::default().fg(Color::Green)
+    } else if log_str.contains('➤') {
+        Style::default().fg(Color::Magenta)
+    } else if log_str.contains('◷') || log_str.contains('⏳') {
+        Style::default().fg(Color::Yellow)
+    } else if log_str.contains('!') {
+        Style::default().fg(Color::Red)
+    } else if log_str.contains('✎') {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::Gray)
+    };
+
+    if max_width == 0 {
+        return vec![Line::from(Span::styled(log_str.to_string(), style))];
+    }
+    if log_str.chars().count() <= max_width {
+        return vec![Line::from(Span::styled(log_str.to_string(), style))];
+    }
+
+    let has_timestamp = log_str.len() >= 9
+        && log_str.as_bytes()[2] == b':'
+        && log_str.as_bytes()[5] == b':'
+        && log_str.as_bytes()[8] == b' ';
+
+    if has_timestamp && max_width > 15 {
+        let timestamp = &log_str[..9];
+        let rest = &log_str[9..];
+        let sub_width = max_width.saturating_sub(9);
+        let wrapped_rest = wrap_text(rest, sub_width);
+        let mut lines = Vec::new();
+        for (idx, seg) in wrapped_rest.into_iter().enumerate() {
+            if idx == 0 {
+                lines.push(Line::from(vec![
+                    Span::styled(timestamp.to_string(), style),
+                    Span::styled(seg, style),
+                ]));
+            } else {
+                lines.push(Line::from(vec![
+                    Span::styled("         ".to_string(), style),
+                    Span::styled(seg, style),
+                ]));
+            }
+        }
+        lines
+    } else {
+        let wrapped = wrap_text(log_str, max_width);
+        wrapped
+            .into_iter()
+            .map(|s| Line::from(Span::styled(s, style)))
+            .collect()
+    }
+}
+
+pub fn compute_queue_item_lines(
+    item: &QueueItem,
+    is_editing: bool,
+    inner_width: usize,
+) -> Vec<Line<'static>> {
+    let (status_badge, status_style) = if is_editing {
+        (
+            "[✎ EDITING]",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        match item.status {
+            ItemStatus::Queued => ("[⏳ QUEUED]", Style::default().fg(Color::Yellow)),
+            ItemStatus::Submitting => ("[➤ SENDING]", Style::default().fg(Color::Magenta)),
+            ItemStatus::Acknowledged => ("[✓ SENT]", Style::default().fg(Color::Green)),
+            ItemStatus::Uncertain => ("[✕ PAUSED]", Style::default().fg(Color::Red)),
+        }
+    };
+
+    let prefix = format!("{} #{} ", status_badge, item.id);
+    let prefix_len = prefix.chars().count();
+
+    let mut lines = Vec::new();
+    let prompt_text = item.prompt.trim();
+
+    if inner_width <= prefix_len + 4 {
+        lines.push(Line::from(Span::styled(prefix, status_style)));
+        let wrapped_prompt = wrap_text(prompt_text, inner_width.saturating_sub(2).max(1));
+        for seg in wrapped_prompt {
+            lines.push(Line::from(Span::raw(format!("  {}", seg))));
+        }
+    } else {
+        let available_first_line = inner_width.saturating_sub(prefix_len);
+        let continuation_indent_len = prefix_len.min(6);
+        let continuation_indent = " ".repeat(continuation_indent_len);
+        let available_next_lines = inner_width.saturating_sub(continuation_indent_len).max(1);
+
+        let mut words = prompt_text.split_whitespace().peekable();
+        let mut line1 = String::new();
+        while let Some(&w) = words.peek() {
+            let add_len = if line1.is_empty() {
+                w.chars().count()
+            } else {
+                line1.chars().count() + 1 + w.chars().count()
+            };
+            if add_len <= available_first_line {
+                if !line1.is_empty() {
+                    line1.push(' ');
+                }
+                line1.push_str(w);
+                words.next();
+            } else {
+                break;
+            }
+        }
+
+        if line1.is_empty() {
+            if let Some(w) = words.next() {
+                let (part, _) = safe_char_take(w, available_first_line);
+                line1.push_str(part);
+            }
+        }
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix, status_style),
+            Span::raw(line1),
+        ]));
+
+        let remaining_words: Vec<&str> = words.collect();
+        if !remaining_words.is_empty() {
+            let rem_text = remaining_words.join(" ");
+            let wrapped_rem = wrap_text(&rem_text, available_next_lines);
+            for seg in wrapped_rem {
+                lines.push(Line::from(vec![
+                    Span::raw(continuation_indent.clone()),
+                    Span::raw(seg),
+                ]));
+            }
+        }
+    }
+
+    if let Some(att) = &item.attachments_summary {
+        let att_wrapped = wrap_text(att, inner_width.saturating_sub(4).max(1));
+        for (i, seg) in att_wrapped.into_iter().enumerate() {
+            let indent = if i == 0 { "   📎 " } else { "      " };
+            lines.push(Line::from(vec![
+                Span::raw(indent),
+                Span::styled(seg, Style::default().fg(Color::Cyan)),
+            ]));
+        }
+    }
+
+    lines
+}
+
+pub fn compute_item_height(item: &QueueItem, inner_width: usize) -> usize {
+    compute_queue_item_lines(item, false, inner_width).len()
+}
+
 pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
     enable_raw_mode()?;
     let mut stdout = stdout();
@@ -455,7 +688,11 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
     while app.running {
         terminal.draw(|f| {
             let size = f.area();
-            let inner_width = (size.width.saturating_sub(4)).max(20) as usize;
+            let is_narrow = size.width < 80;
+            let is_short = size.height < 24;
+
+            let margin = if is_short || size.width < 75 { 0 } else { 1 };
+            let inner_width = (size.width.saturating_sub(2 + (margin * 2))).max(20) as usize;
             let usage_summary = app.supervisor.get_target_usage_summary();
 
             let (state_badge, state_badge_len) = match app.supervisor.state_machine.current() {
@@ -562,21 +799,26 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
                 .map(|line| line.width().div_ceil(inner_width).max(1))
                 .sum();
 
-            let header_height = (total_rows as u16 + 2).min(size.height.saturating_sub(6));
+            let footer_height = if size.height < 16 { 0 } else { 1 };
+            let input_height = 3;
+            let min_middle_height = if size.height < 20 { 4 } else { 6 };
+            let reserved = input_height + footer_height + min_middle_height + (margin * 2);
+            let max_header = size.height.saturating_sub(reserved).max(3);
+            let header_height = (total_rows as u16 + 2).min(max_header);
 
             // Main vertical layout:
             // 1. Header (height: header_height, dynamically computed from rows needed)
-            // 2. Middle: Queue (left) & Logs (right)
+            // 2. Middle: Queue & Logs
             // 3. Input Box (height: 3)
-            // 4. Footer (height: 1)
+            // 4. Footer (height: footer_height)
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .margin(1)
+                .margin(margin)
                 .constraints([
                     Constraint::Length(header_height),
-                    Constraint::Min(4),
-                    Constraint::Length(3),
-                    Constraint::Length(1),
+                    Constraint::Min(min_middle_height),
+                    Constraint::Length(input_height),
+                    Constraint::Length(footer_height),
                 ])
                 .split(size);
 
@@ -595,70 +837,70 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
                 .wrap(Wrap { trim: true });
             f.render_widget(header_paragraph, chunks[0]);
 
-            // 2. Middle: Queue (left) & Logs (right)
-            let middle_chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                .split(chunks[1]);
+            // 2. Middle: Queue & Logs
+            let all_items = app.supervisor.queue.all_items();
+            let middle_rect = chunks[1];
+
+            let middle_chunks = if is_narrow {
+                // On narrow screens (e.g. mobile or split panes), stack vertically so both boxes have full width!
+                let queue_inner_width = middle_rect.width.saturating_sub(2) as usize;
+                let queue_needed_height = if all_items.is_empty() {
+                    let placeholder_lines = wrap_text(
+                        "(No prompts in queue. Type below and press Enter)",
+                        queue_inner_width.saturating_sub(1).max(1),
+                    )
+                    .len();
+                    (placeholder_lines as u16 + 2).min(middle_rect.height.saturating_sub(3).max(3))
+                } else {
+                    let total_item_lines: usize = all_items
+                        .iter()
+                        .map(|item| compute_item_height(item, queue_inner_width))
+                        .sum();
+                    let max_queue_h = (middle_rect.height / 2).max(3);
+                    ((total_item_lines as u16) + 2).min(max_queue_h).max(3)
+                };
+
+                Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(queue_needed_height), Constraint::Min(3)])
+                    .split(middle_rect)
+            } else {
+                // On wide screens, display side-by-side (50% / 50%)
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .split(middle_rect)
+            };
 
             // Track queue panel coordinates for mouse click detection
             app.queue_rect = middle_chunks[0];
+            let queue_rect = middle_chunks[0];
+            let log_rect = middle_chunks[1];
 
             // Queue List
-            let all_items = app.supervisor.queue.all_items();
             let queue_title = format!(" Prompt Queue ({}) ", all_items.len());
+            let queue_inner_width = queue_rect.width.saturating_sub(2) as usize;
             let queue_items: Vec<ListItem> = if all_items.is_empty() {
-                vec![ListItem::new(Line::from(Span::styled(
-                    " (No prompts in queue. Type below and press Enter)",
-                    Style::default().fg(Color::DarkGray),
-                )))]
+                let placeholder = "(No prompts in queue. Type below and press Enter)";
+                let wrapped_placeholder =
+                    wrap_text(placeholder, queue_inner_width.saturating_sub(1).max(1));
+                vec![ListItem::new(
+                    wrapped_placeholder
+                        .into_iter()
+                        .map(|line| {
+                            Line::from(Span::styled(
+                                format!(" {}", line),
+                                Style::default().fg(Color::DarkGray),
+                            ))
+                        })
+                        .collect::<Vec<_>>(),
+                )]
             } else {
                 all_items
                     .iter()
                     .map(|item| {
                         let is_editing = app.editing_item_id == Some(item.id);
-                        let (status_badge, status_style) = if is_editing {
-                            (
-                                "[✎ EDITING]",
-                                Style::default()
-                                    .fg(Color::Yellow)
-                                    .add_modifier(Modifier::BOLD),
-                            )
-                        } else {
-                            match item.status {
-                                ItemStatus::Queued => {
-                                    ("[⏳ QUEUED]", Style::default().fg(Color::Yellow))
-                                }
-                                ItemStatus::Submitting => {
-                                    ("[➤ SENDING]", Style::default().fg(Color::Magenta))
-                                }
-                                ItemStatus::Acknowledged => {
-                                    ("[✓ SENT]", Style::default().fg(Color::Green))
-                                }
-                                ItemStatus::Uncertain => {
-                                    ("[✕ PAUSED]", Style::default().fg(Color::Red))
-                                }
-                            }
-                        };
-
-                        let prompt_snippet = if item.prompt.len() > 40 {
-                            format!("{}…", &item.prompt[..40])
-                        } else {
-                            item.prompt.clone()
-                        };
-
-                        let mut lines = vec![Line::from(vec![
-                            Span::styled(format!("{} #{} ", status_badge, item.id), status_style),
-                            Span::raw(prompt_snippet),
-                        ])];
-
-                        if let Some(att) = &item.attachments_summary {
-                            lines.push(Line::from(vec![
-                                Span::raw("   "),
-                                Span::styled(att.clone(), Style::default().fg(Color::Cyan)),
-                            ]));
-                        }
-
+                        let lines = compute_queue_item_lines(item, is_editing, queue_inner_width);
                         ListItem::new(lines)
                     })
                     .collect()
@@ -681,36 +923,30 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
                         .add_modifier(Modifier::BOLD),
                 ));
             let queue_widget = List::new(queue_items).block(queue_block);
-            f.render_widget(queue_widget, middle_chunks[0]);
+            f.render_widget(queue_widget, queue_rect);
 
             // Event Logs List
             let log_title = " Real-time Event Log ";
-            let max_logs_visible = middle_chunks[1].height.saturating_sub(2) as usize;
-            let display_logs: Vec<ListItem> = app
-                .logs
-                .iter()
-                .rev()
-                .take(max_logs_visible)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .map(|log_str| {
-                    let style = if log_str.contains("✓") {
-                        Style::default().fg(Color::Green)
-                    } else if log_str.contains("➤") {
-                        Style::default().fg(Color::Magenta)
-                    } else if log_str.contains("◷") || log_str.contains("⏳") {
-                        Style::default().fg(Color::Yellow)
-                    } else if log_str.contains('!') {
-                        Style::default().fg(Color::Red)
-                    } else if log_str.contains('✎') {
-                        Style::default().fg(Color::Cyan)
-                    } else {
-                        Style::default().fg(Color::Gray)
-                    };
-                    ListItem::new(Line::from(Span::styled(log_str.clone(), style)))
-                })
-                .collect();
+            let log_inner_width = log_rect.width.saturating_sub(2) as usize;
+            let log_inner_height = log_rect.height.saturating_sub(2) as usize;
+
+            let mut display_items: Vec<ListItem> = Vec::new();
+            let mut total_rendered_lines = 0;
+
+            for log_str in app.logs.iter().rev() {
+                let lines = wrap_log_line(log_str, log_inner_width);
+                let count = lines.len();
+                if total_rendered_lines + count > log_inner_height && total_rendered_lines > 0 {
+                    break;
+                }
+                total_rendered_lines += count;
+                display_items.push(ListItem::new(lines));
+                if total_rendered_lines >= log_inner_height {
+                    break;
+                }
+            }
+
+            display_items.reverse();
 
             let log_block = Block::default()
                 .borders(Borders::ALL)
@@ -722,30 +958,36 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
                         .fg(Color::White)
                         .add_modifier(Modifier::BOLD),
                 ));
-            let log_widget = List::new(display_logs).block(log_block);
-            f.render_widget(log_widget, middle_chunks[1]);
+            let log_widget = List::new(display_items).block(log_block);
+            f.render_widget(log_widget, log_rect);
 
             // 3. Input Box
             let (input_title, border_color) = if let Some(id) = app.editing_item_id {
-                (
+                let title = if size.width < 60 {
+                    format!(" › [EDITING #{}] (Enter: save, Esc: cancel) ", id)
+                } else {
                     format!(
                         " › [EDITING PROMPT #{}] (Enter to save, Esc to cancel) ",
                         id
-                    ),
-                    Color::Yellow,
-                )
+                    )
+                };
+                (title, Color::Yellow)
             } else {
-                (
-                    " › Add prompt or paste image path (Enter to queue) ".to_string(),
-                    Color::Cyan,
-                )
+                let title = if size.width < 60 {
+                    " › Add prompt (Enter to queue) ".to_string()
+                } else {
+                    " › Add prompt or paste image path (Enter to queue) ".to_string()
+                };
+                (title, Color::Cyan)
             };
 
             let input_text = if app.input.is_empty() {
-                Span::styled(
-                    "Type prompt or paste @/path/to/img.png here...",
-                    Style::default().fg(Color::DarkGray),
-                )
+                let placeholder = if size.width < 50 {
+                    "Type prompt or @/path/to/img..."
+                } else {
+                    "Type prompt or paste @/path/to/img.png here..."
+                };
+                Span::styled(placeholder, Style::default().fg(Color::DarkGray))
             } else {
                 Span::styled(app.input.clone(), Style::default().fg(Color::White))
             };
@@ -769,64 +1011,109 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
             f.set_cursor_position((cursor_x, cursor_y));
 
             // 4. Footer
-            let footer_text = if app.editing_item_id.is_some() {
-                vec![
-                    Span::styled(
-                        " [Enter] ",
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw("Save update  • "),
-                    Span::styled(
-                        " [Esc] ",
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw("Cancel edit  • "),
-                    Span::styled(
-                        " [Ctrl+C] ",
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw("Detach cleanly"),
-                ]
-            } else {
-                vec![
-                    Span::styled(
-                        " [Enter] ",
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw("Queue prompt  • "),
-                    Span::styled(
-                        " [Shift+←] ",
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw("or "),
-                    Span::styled(
-                        "Click queue item ",
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw("to edit  • "),
-                    Span::styled(
-                        " [Esc] ",
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw("Detach"),
-                ]
-            };
-            let footer_paragraph = Paragraph::new(Line::from(footer_text));
-            f.render_widget(footer_paragraph, chunks[3]);
+            if footer_height > 0 {
+                let footer_text = if app.editing_item_id.is_some() {
+                    if size.width < 65 {
+                        vec![
+                            Span::styled(
+                                " [Enter] ",
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::raw("Save  • "),
+                            Span::styled(
+                                " [Esc] ",
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::raw("Cancel"),
+                        ]
+                    } else {
+                        vec![
+                            Span::styled(
+                                " [Enter] ",
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::raw("Save update  • "),
+                            Span::styled(
+                                " [Esc] ",
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::raw("Cancel edit  • "),
+                            Span::styled(
+                                " [Ctrl+C] ",
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::raw("Detach cleanly"),
+                        ]
+                    }
+                } else if size.width < 65 {
+                    vec![
+                        Span::styled(
+                            " [Enter] ",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("Queue  • "),
+                        Span::styled(
+                            " [Shift+←] ",
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("Edit  • "),
+                        Span::styled(
+                            " [Esc] ",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("Detach"),
+                    ]
+                } else {
+                    vec![
+                        Span::styled(
+                            " [Enter] ",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("Queue prompt  • "),
+                        Span::styled(
+                            " [Shift+←] ",
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("or "),
+                        Span::styled(
+                            "Click queue item ",
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("to edit  • "),
+                        Span::styled(
+                            " [Esc] ",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("Detach"),
+                    ]
+                };
+                let footer_paragraph = Paragraph::new(Line::from(footer_text));
+                f.render_widget(footer_paragraph, chunks[3]);
+            }
         })?;
 
         // Handle keyboard and mouse events with 100ms timeout
