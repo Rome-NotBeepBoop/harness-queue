@@ -185,17 +185,27 @@ pub fn select_ambiguous_target<R: BufRead, W: Write>(
         return Some(targets[0].clone());
     }
 
-    let _ = writeln!(writer, "\n? Multiple adjacent agents detected:");
+    let _ = writeln!(
+        writer,
+        "\n? Multiple agents detected in this terminal tab ({} found):",
+        targets.len()
+    );
     for (idx, target) in targets.iter().enumerate() {
+        let worktree_info = if !target.cwd.is_empty() {
+            format!(" · worktree: {}", target.cwd)
+        } else {
+            "".to_string()
+        };
         let _ = writeln!(
             writer,
-            "  {}) {} ({})",
+            "  {}) {} ({}){}",
             idx + 1,
             target.harness.display_name(),
-            shorten_handle(&target.pane_id)
+            shorten_handle(&target.pane_id),
+            worktree_info
         );
     }
-    let _ = write!(writer, "› Select [1]: ");
+    let _ = write!(writer, "› Select agent to target [1]: ");
     let _ = writer.flush();
 
     let mut line = String::new();
@@ -203,6 +213,9 @@ pub fn select_ambiguous_target<R: BufRead, W: Write>(
         Ok(0) => None, // EOF / Cancelled
         Ok(_) => {
             let trimmed = line.trim();
+            if trimmed.eq_ignore_ascii_case("q") || trimmed.eq_ignore_ascii_case("exit") {
+                return None;
+            }
             if trimmed.is_empty() {
                 return Some(targets[0].clone());
             }

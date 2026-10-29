@@ -183,20 +183,16 @@ fn main() {
     let target: AgentTarget = match terminal.find_adjacent_agent(&current_pane) {
         Ok(NeighborDetection::Exact(t)) => t,
         Ok(NeighborDetection::Ambiguous(list)) => {
-            if is_tui {
-                list[0].clone()
-            } else {
-                let stdout = io::stdout();
-                let mut out = stdout.lock();
-                let stdin = io::stdin();
-                let mut reader = BufReader::new(stdin.lock());
-                match select_ambiguous_target(&mut reader, &mut out, &list) {
-                    Some(selected) => selected,
-                    None => {
-                        let _ = writeln!(out, "\n✓ Cancelled");
-                        let _ = out.flush();
-                        std::process::exit(0);
-                    }
+            let stdout = io::stdout();
+            let mut out = stdout.lock();
+            let stdin = io::stdin();
+            let mut reader = BufReader::new(stdin.lock());
+            match select_ambiguous_target(&mut reader, &mut out, &list) {
+                Some(selected) => selected,
+                None => {
+                    let _ = writeln!(out, "\n✓ Cancelled");
+                    let _ = out.flush();
+                    std::process::exit(0);
                 }
             }
         }
