@@ -73,7 +73,10 @@ impl HarnessAdapter for ClaudeHarness {
             }
             if let Some(pct_idx) = prev.find('%') {
                 let start = prev[..pct_idx].rfind(' ').map(|i| i + 1).unwrap_or(0);
-                let end = prev[pct_idx..].find(' ').map(|i| pct_idx + i).unwrap_or(prev.len());
+                let end = prev[pct_idx..]
+                    .find(' ')
+                    .map(|i| pct_idx + i)
+                    .unwrap_or(prev.len());
                 let snippet = prev[start..end].trim();
                 if snippet.contains('%') {
                     return Some(format!("Claude Code: {} tokens · Ready", snippet));

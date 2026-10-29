@@ -21,10 +21,7 @@ fn test_usage_summaries_only_for_supported_agents() {
     };
     let codex_harness = CodexHarness::new();
     let codex_usage = codex_harness.get_usage_summary(&codex_target, &mock_terminal);
-    assert!(
-        codex_usage.is_some(),
-        "Codex must produce a usage summary"
-    );
+    assert!(codex_usage.is_some(), "Codex must produce a usage summary");
 
     let claude_target = AgentTarget {
         terminal_id: "term_2".to_string(),
@@ -51,10 +48,7 @@ fn test_usage_summaries_only_for_supported_agents() {
     };
     let agy_harness = AgyHarness;
     let agy_usage = agy_harness.get_usage_summary(&agy_target, &mock_terminal);
-    assert!(
-        agy_usage.is_some(),
-        "AGY must produce a usage summary"
-    );
+    assert!(agy_usage.is_some(), "AGY must produce a usage summary");
 
     // Unsupported agents must return None:
     let pi_target = AgentTarget {

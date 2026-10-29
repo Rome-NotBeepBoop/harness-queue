@@ -483,7 +483,8 @@ fn main() {
                                 render_cli_prompt(&mut stdout, None, &input_buffer, cursor_idx);
                             } else if trimmed == "queue" || trimmed == "list" {
                                 let items = supervisor.queue.all_items();
-                                let _ = write!(stdout, "\r\x1b[KPrompt Queue ({}):\r\n", items.len());
+                                let _ =
+                                    write!(stdout, "\r\x1b[KPrompt Queue ({}):\r\n", items.len());
                                 if items.is_empty() {
                                     let _ = write!(stdout, "  (No prompts in queue)\r\n");
                                 } else {

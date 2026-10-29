@@ -53,21 +53,22 @@ pub fn parse_rate_limits_details(json_str: &str) -> Result<CodexUsageDetails, Ha
         .pointer("/primary/windowDurationMins")
         .and_then(|w| w.as_u64());
 
-    let status = if !ordinary_allowed || reached_type.is_some() || spend_control || primary_used >= 100.0 {
-        let reason = if let Some(rt) = reached_type {
-            format!("Rate limit reached: {}", rt)
-        } else if spend_control {
-            "Spend control limit reached".to_string()
-        } else if primary_used >= 100.0 {
-            "Usage limit 100% reached".to_string()
-        } else {
-            "Usage quota currently exhausted".to_string()
-        };
+    let status =
+        if !ordinary_allowed || reached_type.is_some() || spend_control || primary_used >= 100.0 {
+            let reason = if let Some(rt) = reached_type {
+                format!("Rate limit reached: {}", rt)
+            } else if spend_control {
+                "Spend control limit reached".to_string()
+            } else if primary_used >= 100.0 {
+                "Usage limit 100% reached".to_string()
+            } else {
+                "Usage quota currently exhausted".to_string()
+            };
 
-        QuotaStatus::RateLimited { resets_at, reason }
-    } else {
-        QuotaStatus::Available
-    };
+            QuotaStatus::RateLimited { resets_at, reason }
+        } else {
+            QuotaStatus::Available
+        };
 
     Ok(CodexUsageDetails {
         used_percent: primary_used,

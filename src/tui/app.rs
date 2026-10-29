@@ -326,7 +326,11 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
 
             let usage_summary = app.supervisor.get_target_usage_summary();
             let header_height = if size.height < 24 {
-                if usage_summary.is_some() { 7 } else { 6 }
+                if usage_summary.is_some() {
+                    7
+                } else {
+                    6
+                }
             } else if usage_summary.is_some() {
                 8
             } else {

@@ -37,7 +37,12 @@ fn test_format_boxed_header_and_guide() {
         cwd: "/Users/romey/Developer/Hestia".to_string(),
     };
 
-    let header = format_boxed_header("Orca IDE", "term_d5d8770b-718b-4c1f", &target, Some("Antigravity: Active · Quota available"));
+    let header = format_boxed_header(
+        "Orca IDE",
+        "term_d5d8770b-718b-4c1f",
+        &target,
+        Some("Antigravity: Active · Quota available"),
+    );
     assert!(header.contains("Harness Queue (hq) v0.1"));
     assert!(header.contains("Host: Orca IDE"));
     assert!(header.contains("Location: term_d5d8770b"));

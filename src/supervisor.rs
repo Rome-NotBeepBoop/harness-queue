@@ -99,7 +99,8 @@ impl Supervisor {
 
     pub fn get_target_usage_summary(&self) -> Option<String> {
         if let Some(target) = &self.target {
-            self.harness.get_usage_summary(target, self.terminal.as_ref())
+            self.harness
+                .get_usage_summary(target, self.terminal.as_ref())
         } else {
             None
         }
