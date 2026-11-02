@@ -364,25 +364,12 @@ impl HarnessAdapter for CodexHarness {
 
         if let Some(details) = self.get_cached_or_fresh_details() {
             if details.status == QuotaStatus::Available {
-                // If there's an active quota window with usage (< 100% used), remaining quota is still present
-                if details.used_percent < 100.0
-                    && (details.resets_at.is_some() || details.used_percent > 0.0)
-                {
-                    return true;
-                }
+                return details.used_percent < 100.0;
+            } else {
+                return false;
             }
         }
 
-        // Also check terminal preview if JSON-RPC wasn't available
-        if let Some(preview) = terminal.get_agent_preview(&target.pane_id) {
-            let prev_lower = preview.to_lowercase();
-            if (prev_lower.contains("limit:") || prev_lower.contains("limit left"))
-                && prev_lower.contains("left")
-            {
-                return true;
-            }
-        }
-
-        false
+        true
     }
 }

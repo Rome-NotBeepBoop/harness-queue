@@ -36,6 +36,16 @@ impl MockTerminalAdapter {
         }
     }
 
+    pub fn with_target(target: AgentTarget) -> Self {
+        Self {
+            current_pane: "w1:p1".to_string(),
+            target,
+            status: Mutex::new(AgentStatus::Ready),
+            prompt_count: AtomicU32::new(0),
+            preview: Mutex::new(None),
+        }
+    }
+
     pub fn set_status(&self, new_status: AgentStatus) {
         let mut s = self.status.lock().unwrap();
         *s = new_status;

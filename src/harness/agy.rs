@@ -65,4 +65,18 @@ impl HarnessAdapter for AgyHarness {
             _ => Some("Antigravity: Active · Quota available".to_string()),
         }
     }
+
+    fn has_active_remaining_quota(
+        &self,
+        target: &AgentTarget,
+        terminal: &dyn TerminalAdapter,
+    ) -> bool {
+        if let Ok(AgentStatus::RateLimited) = terminal.get_agent_status(&target.pane_id) {
+            return false;
+        }
+        if let Ok(QuotaStatus::RateLimited { .. }) = self.check_quota(&target.session_id) {
+            return false;
+        }
+        true
+    }
 }

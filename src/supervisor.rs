@@ -17,6 +17,7 @@ pub struct Supervisor {
     pub reported_waiting_busy: bool,
     pub reported_waiting_quota: bool,
     pub reported_held: bool,
+    pub draining_recovered_queue: bool,
 }
 
 impl Supervisor {
@@ -37,6 +38,7 @@ impl Supervisor {
             reported_waiting_busy: false,
             reported_waiting_quota: false,
             reported_held: false,
+            draining_recovered_queue: false,
         }
     }
 
@@ -76,7 +78,11 @@ impl Supervisor {
     }
 
     pub fn enqueue_prompt(&mut self, prompt: String) -> usize {
-        self.queue.enqueue(prompt)
+        let id = self.queue.enqueue(prompt);
+        if self.state_machine.current() == State::Held {
+            let _ = self.queue.mark_held(id);
+        }
+        id
     }
 
     pub fn enqueue_prompt_with_attachments(
@@ -84,8 +90,13 @@ impl Supervisor {
         prompt: String,
         attachments_summary: Option<String>,
     ) -> usize {
-        self.queue
-            .enqueue_with_attachments(prompt, attachments_summary)
+        let id = self
+            .queue
+            .enqueue_with_attachments(prompt, attachments_summary);
+        if self.state_machine.current() == State::Held {
+            let _ = self.queue.mark_held(id);
+        }
+        id
     }
 
     pub fn update_queued_prompt(
@@ -153,6 +164,7 @@ impl Supervisor {
                 self.quota_resets_at = resets_at;
                 self.reported_held = false;
                 self.queue.release_held();
+                self.draining_recovered_queue = true;
                 if !self.reported_waiting_quota {
                     let _ = self.state_machine.transition(State::RateLimited);
                     let _ = self.state_machine.transition(State::WaitingForRecovery);
@@ -187,12 +199,18 @@ impl Supervisor {
                 return Ok(events);
             }
             QuotaStatus::Available => {
+                if !self.queue.has_pending() {
+                    self.draining_recovered_queue = false;
+                }
+
                 if self.reported_waiting_quota {
                     events.push("✓ Usage reset detected".to_string());
                     events.push("✓ Original session recovered".to_string());
                     self.reported_waiting_quota = false;
+                    self.draining_recovered_queue = true;
                     let _ = self.state_machine.transition(State::RecoveringSession);
-                } else if self.queue.has_pending()
+                } else if !self.draining_recovered_queue
+                    && self.queue.has_pending()
                     && self
                         .harness
                         .has_active_remaining_quota(&target, self.terminal.as_ref())
@@ -299,6 +317,9 @@ impl Supervisor {
                         let _ = self.state_machine.transition(State::PromptAcknowledged);
                         self.last_sent_id = Some(id);
                         events.push(format!("✓ Prompt #{} sent!", id));
+                        if !self.queue.has_pending() {
+                            self.draining_recovered_queue = false;
+                        }
                     }
                     Ok(_) | Err(_) => {
                         let _ = self.queue.mark_uncertain(id);

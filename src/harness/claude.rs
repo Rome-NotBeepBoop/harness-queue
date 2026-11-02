@@ -87,18 +87,19 @@ impl HarnessAdapter for ClaudeHarness {
         target: &AgentTarget,
         terminal: &dyn TerminalAdapter,
     ) -> bool {
+        if let Ok(AgentStatus::RateLimited) = terminal.get_agent_status(&target.pane_id) {
+            return false;
+        }
         if let Some(prev) = terminal.get_agent_preview(&target.pane_id) {
             let prev_lower = prev.to_lowercase();
-            if prev_lower.contains("rate limit") || prev_lower.contains("usage limit") {
+            if prev_lower.contains("rate limit")
+                || prev_lower.contains("usage limit")
+                || prev_lower.contains(" 0% left")
+                || prev_lower.contains(": 0% left")
+            {
                 return false;
             }
-            if prev_lower.contains("tokens")
-                || prev_lower.contains("%")
-                || prev_lower.contains("left")
-            {
-                return true;
-            }
         }
-        false
+        true
     }
 }

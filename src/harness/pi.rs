@@ -52,4 +52,29 @@ impl HarnessAdapter for PiHarness {
             level: SupportLevel::Partial,
         }
     }
+
+    fn has_active_remaining_quota(
+        &self,
+        target: &AgentTarget,
+        terminal: &dyn TerminalAdapter,
+    ) -> bool {
+        if let Ok(AgentStatus::RateLimited) = terminal.get_agent_status(&target.pane_id) {
+            return false;
+        }
+        if let Ok(QuotaStatus::RateLimited { .. }) = self.check_quota(&target.session_id) {
+            return false;
+        }
+        if let Some(preview) = terminal.get_agent_preview(&target.pane_id) {
+            let prev_lower = preview.to_lowercase();
+            if prev_lower.contains("rate limit")
+                || prev_lower.contains("usage limit")
+                || prev_lower.contains(" 0% left")
+                || prev_lower.contains(": 0% left")
+                || prev_lower.contains("quota exceeded")
+            {
+                return false;
+            }
+        }
+        true
+    }
 }
