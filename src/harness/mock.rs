@@ -9,6 +9,7 @@ pub struct MockHarness {
     pub kind: HarnessKind,
     pub quota: Mutex<QuotaStatus>,
     pub readiness: Mutex<Option<AgentReadiness>>,
+    pub active_remaining_quota: Mutex<bool>,
 }
 
 impl MockHarness {
@@ -17,6 +18,7 @@ impl MockHarness {
             kind,
             quota: Mutex::new(QuotaStatus::Available),
             readiness: Mutex::new(None),
+            active_remaining_quota: Mutex::new(false),
         }
     }
 
@@ -28,6 +30,11 @@ impl MockHarness {
     pub fn set_readiness(&self, r: AgentReadiness) {
         let mut rd = self.readiness.lock().unwrap();
         *rd = Some(r);
+    }
+
+    pub fn set_active_remaining_quota(&self, active: bool) {
+        let mut a = self.active_remaining_quota.lock().unwrap();
+        *a = active;
     }
 }
 
@@ -94,5 +101,13 @@ impl HarnessAdapter for MockHarness {
                 level: SupportLevel::ObserveOnly,
             },
         }
+    }
+
+    fn has_active_remaining_quota(
+        &self,
+        _target: &AgentTarget,
+        _terminal: &dyn TerminalAdapter,
+    ) -> bool {
+        *self.active_remaining_quota.lock().unwrap()
     }
 }

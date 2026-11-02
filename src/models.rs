@@ -33,6 +33,7 @@ pub enum State {
     DeliveryUncertain,
     Error,
     Detached,
+    Held,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,6 +42,7 @@ pub enum ItemStatus {
     Submitting,
     Acknowledged,
     Uncertain,
+    Held,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

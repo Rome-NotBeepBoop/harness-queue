@@ -80,6 +80,72 @@ fn test_supervisor_rate_limit_and_recovery() {
 }
 
 #[test]
+fn test_supervisor_active_quota_held_until_zero_percent_and_recovery() {
+    use harness_queue::models::State;
+
+    let terminal = Arc::new(MockTerminalAdapter::new());
+    let harness = Arc::new(MockHarness::new(HarnessKind::Codex));
+
+    // Agent has active remaining quota (e.g. 10% left in 5h window)
+    harness.set_quota(QuotaStatus::Available);
+    harness.set_active_remaining_quota(true);
+
+    let mut sup = Supervisor::new(terminal.clone(), harness.clone(), Mode::AutoSend);
+    sup.initialize().expect("initialized");
+    let id = sup.enqueue_prompt("Overnight prompt".to_string());
+    assert_eq!(id, 1);
+
+    // Initial tick: agent has active remaining quota -> supervisor must HOLD, not dispatch!
+    let events = sup.tick().expect("tick held");
+    assert!(events
+        .iter()
+        .any(|e| e.contains("Agent has remaining quota. Queue is HELD")));
+    assert_eq!(sup.state_machine.current(), State::Held);
+    assert_eq!(sup.queue.get(1).unwrap().status, ItemStatus::Held);
+    assert_eq!(*terminal.status.lock().unwrap(), AgentStatus::Ready);
+    assert_eq!(
+        terminal
+            .prompt_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+
+    // Subsequent tick while quota is still active: still held, no duplicate log
+    let events_held2 = sup.tick().expect("tick held 2");
+    assert!(events_held2.is_empty());
+    assert_eq!(sup.state_machine.current(), State::Held);
+
+    // User exhausts remaining quota in terminal -> remaining hits 0% (rate limit reached)
+    harness.set_active_remaining_quota(false);
+    harness.set_quota(QuotaStatus::RateLimited {
+        resets_at: Some(1793055000),
+        reason: "Rate limit reached".to_string(),
+    });
+
+    let events_limit = sup.tick().expect("tick limit");
+    assert!(events_limit
+        .iter()
+        .any(|e| e.contains("Waiting for quota recovery")));
+    assert_eq!(sup.state_machine.current(), State::WaitingForRecovery);
+    assert_eq!(sup.queue.get(1).unwrap().status, ItemStatus::Queued);
+
+    // Recovery time arrives -> quota resets to fresh 100%, and prompt is dispatched!
+    harness.set_quota(QuotaStatus::Available);
+    let events_recover = sup.tick().expect("tick recover");
+    assert!(events_recover
+        .iter()
+        .any(|e| e.contains("Usage reset detected")));
+    assert!(events_recover.iter().any(|e| e.contains("Prompt #1 sent!")));
+    assert_eq!(sup.queue.get(1).unwrap().status, ItemStatus::Acknowledged);
+    assert_eq!(
+        terminal
+            .prompt_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+}
+
+#[test]
 fn test_uncertain_delivery_halts_subsequent_dispatches() {
     let terminal = Arc::new(MockTerminalAdapter::new());
     let harness = Arc::new(MockHarness::new(HarnessKind::Codex));

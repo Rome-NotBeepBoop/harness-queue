@@ -87,6 +87,13 @@ pub trait HarnessAdapter: Send + Sync {
     ) -> Option<String> {
         None
     }
+    fn has_active_remaining_quota(
+        &self,
+        _target: &AgentTarget,
+        _terminal: &dyn TerminalAdapter,
+    ) -> bool {
+        false
+    }
 }
 
 pub fn create_harness_adapter(kind: &HarnessKind) -> Box<dyn HarnessAdapter> {

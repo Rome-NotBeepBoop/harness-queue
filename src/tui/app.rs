@@ -256,7 +256,7 @@ impl<'a> TuiApp<'a> {
                 for item in self.supervisor.queue.all_items() {
                     let item_height = compute_item_height(item, inner_width);
                     if relative_row >= current_row && relative_row < current_row + item_height {
-                        if item.status == ItemStatus::Queued {
+                        if item.status == ItemStatus::Queued || item.status == ItemStatus::Held {
                             self.start_editing(item.id);
                         } else {
                             self.add_log(format!(
@@ -588,6 +588,7 @@ pub fn compute_queue_item_lines(
     } else {
         match item.status {
             ItemStatus::Queued => ("[⏳ QUEUED]", Style::default().fg(Color::Yellow)),
+            ItemStatus::Held => ("[⏳ HELD]", Style::default().fg(Color::Yellow)),
             ItemStatus::Submitting => ("[➤ SENDING]", Style::default().fg(Color::Magenta)),
             ItemStatus::Acknowledged => ("[✓ SENT]", Style::default().fg(Color::Green)),
             ItemStatus::Uncertain => ("[✕ PAUSED]", Style::default().fg(Color::Red)),
@@ -740,6 +741,15 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
                             .add_modifier(Modifier::BOLD),
                     ),
                     13,
+                ),
+                State::Held => (
+                    Span::styled(
+                        " ⏳ HELD (Waiting for 0% quota) ",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    32,
                 ),
                 State::RateLimited | State::WaitingForRecovery => {
                     let reset_text = if let Some(ts) = app.supervisor.quota_resets_at {

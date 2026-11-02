@@ -16,6 +16,7 @@ pub struct Supervisor {
     pub last_sent_id: Option<usize>,
     pub reported_waiting_busy: bool,
     pub reported_waiting_quota: bool,
+    pub reported_held: bool,
 }
 
 impl Supervisor {
@@ -35,6 +36,7 @@ impl Supervisor {
             last_sent_id: None,
             reported_waiting_busy: false,
             reported_waiting_quota: false,
+            reported_held: false,
         }
     }
 
@@ -149,6 +151,8 @@ impl Supervisor {
                 reason: _,
             } => {
                 self.quota_resets_at = resets_at;
+                self.reported_held = false;
+                self.queue.release_held();
                 if !self.reported_waiting_quota {
                     let _ = self.state_machine.transition(State::RateLimited);
                     let _ = self.state_machine.transition(State::WaitingForRecovery);
@@ -188,6 +192,26 @@ impl Supervisor {
                     events.push("✓ Original session recovered".to_string());
                     self.reported_waiting_quota = false;
                     let _ = self.state_machine.transition(State::RecoveringSession);
+                } else if self.queue.has_pending()
+                    && self
+                        .harness
+                        .has_active_remaining_quota(&target, self.terminal.as_ref())
+                {
+                    // Active quota remains on the harness! Hold queued prompts until usage hits 0%
+                    let _ = self.state_machine.transition(State::Held);
+                    self.queue.mark_all_pending_held();
+                    if !self.reported_held {
+                        events.push(
+                            "◷ Agent has remaining quota. Queue is HELD until usage reaches 0%"
+                                .to_string(),
+                        );
+                        self.reported_held = true;
+                    }
+                    return Ok(events);
+                } else if self.state_machine.current() == State::Held {
+                    self.reported_held = false;
+                    self.queue.release_held();
+                    let _ = self.state_machine.transition(State::AgentReady);
                 }
             }
             QuotaStatus::Unknown => {}

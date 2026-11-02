@@ -78,6 +78,36 @@ impl QueueEngine {
         self.items.iter().find(|i| i.status == ItemStatus::Queued)
     }
 
+    pub fn has_pending(&self) -> bool {
+        self.items
+            .iter()
+            .any(|i| i.status == ItemStatus::Queued || i.status == ItemStatus::Held)
+    }
+
+    pub fn mark_held(&mut self, id: usize) -> Result<(), QueueError> {
+        let item = self.get_mut(id).ok_or(QueueError::ItemNotFound(id))?;
+        if item.status == ItemStatus::Queued {
+            item.status = ItemStatus::Held;
+        }
+        Ok(())
+    }
+
+    pub fn mark_all_pending_held(&mut self) {
+        for item in &mut self.items {
+            if item.status == ItemStatus::Queued {
+                item.status = ItemStatus::Held;
+            }
+        }
+    }
+
+    pub fn release_held(&mut self) {
+        for item in &mut self.items {
+            if item.status == ItemStatus::Held {
+                item.status = ItemStatus::Queued;
+            }
+        }
+    }
+
     pub fn mark_submitting(&mut self, id: usize, timestamp: u64) -> Result<(), QueueError> {
         let item = self.get_mut(id).ok_or(QueueError::ItemNotFound(id))?;
         if item.status != ItemStatus::Queued {
@@ -124,7 +154,7 @@ impl QueueEngine {
         new_attachments: Option<String>,
     ) -> Result<(), QueueError> {
         let item = self.get_mut(id).ok_or(QueueError::ItemNotFound(id))?;
-        if item.status != ItemStatus::Queued {
+        if item.status != ItemStatus::Queued && item.status != ItemStatus::Held {
             return Err(QueueError::InvalidStateTransition {
                 id,
                 from: item.status,
@@ -140,14 +170,14 @@ impl QueueEngine {
         self.items
             .iter()
             .rev()
-            .find(|i| i.status == ItemStatus::Queued)
+            .find(|i| i.status == ItemStatus::Queued || i.status == ItemStatus::Held)
             .map(|i| i.id)
     }
 
     pub fn queued_ids(&self) -> Vec<usize> {
         self.items
             .iter()
-            .filter(|i| i.status == ItemStatus::Queued)
+            .filter(|i| i.status == ItemStatus::Queued || i.status == ItemStatus::Held)
             .map(|i| i.id)
             .collect()
     }

@@ -174,6 +174,47 @@ fn test_compute_queue_item_lines_wraps_without_truncation() {
 }
 
 #[test]
+fn test_held_status_badges_in_tui() {
+    use harness_queue::models::{ItemStatus, QueueItem};
+    use harness_queue::tui::app::{compute_header_lines, compute_queue_item_lines};
+    use ratatui::style::Style;
+    use ratatui::text::Span;
+
+    // Header badge
+    let held_badge = Span::styled(" ⏳ HELD (Waiting for 0% quota) ", Style::default());
+    let lines = compute_header_lines(
+        "Orca IDE",
+        "Auto-send",
+        held_badge,
+        32,
+        None,
+        Some("Codex Quota: 85% used (5h window)"),
+        120,
+    );
+    let all_header: String = lines
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        all_header.contains("⏳ HELD (Waiting for 0% quota)"),
+        "Session overview must contain exact ⏳ HELD (Waiting for 0% quota) status"
+    );
+
+    // Queue item badge
+    let mut item = QueueItem::new(1, "Test held prompt".to_string());
+    item.status = ItemStatus::Held;
+    let item_lines = compute_queue_item_lines(&item, false, 80);
+    let item_text: String = item_lines
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        item_text.contains("[⏳ HELD]"),
+        "Queue item must display [⏳ HELD] status badge"
+    );
+}
+
+#[test]
 fn test_layout_never_hides_middle_on_small_panes() {
     use ratatui::layout::{Constraint, Direction, Layout, Rect};
 

@@ -491,6 +491,7 @@ fn main() {
                                     for it in items {
                                         let status_badge = match it.status {
                                             ItemStatus::Queued => "[⏳ QUEUED]",
+                                            ItemStatus::Held => "[⏳ HELD]",
                                             ItemStatus::Submitting => "[➤ SENDING]",
                                             ItemStatus::Acknowledged => "[✓ SENT]",
                                             ItemStatus::Uncertain => "[! UNCERTAIN]",

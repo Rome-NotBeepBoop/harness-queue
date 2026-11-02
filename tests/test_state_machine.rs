@@ -46,6 +46,31 @@ fn test_rate_limited_recovery_transitions() {
 }
 
 #[test]
+fn test_held_state_transitions_and_cannot_dispatch() {
+    let mut sm = StateMachine::new();
+    sm.transition(State::SelectingMode).unwrap();
+    sm.transition(State::Watching).unwrap();
+
+    // From Watching into Held
+    sm.transition(State::Held).unwrap();
+    assert_eq!(sm.current(), State::Held);
+    assert!(!sm.can_dispatch(), "Held state must never dispatch prompts");
+
+    // From Held to RateLimited once remaining quota reaches 0%
+    sm.transition(State::RateLimited).unwrap();
+    assert_eq!(sm.current(), State::RateLimited);
+
+    // Can also transition from AgentReady to Held
+    let mut sm2 = StateMachine::new();
+    sm2.transition(State::SelectingMode).unwrap();
+    sm2.transition(State::Watching).unwrap();
+    sm2.transition(State::AgentReady).unwrap();
+    sm2.transition(State::Held).unwrap();
+    assert_eq!(sm2.current(), State::Held);
+    assert!(!sm2.can_dispatch());
+}
+
+#[test]
 fn test_invalid_transitions_rejected() {
     let mut sm = StateMachine::new();
     // Cannot jump from Detecting directly to Submitting

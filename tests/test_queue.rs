@@ -77,3 +77,30 @@ fn test_update_prompt_while_queued() {
     assert!(res2.is_err());
     assert_eq!(q.get(id).unwrap().prompt, "Updated prompt");
 }
+
+#[test]
+fn test_held_queue_lifecycle() {
+    let mut q = QueueEngine::new();
+    let id = q.enqueue("Original prompt".to_string());
+    assert!(q.has_pending());
+
+    // Mark held
+    q.mark_all_pending_held();
+    assert_eq!(q.get(id).unwrap().status, ItemStatus::Held);
+    assert_eq!(q.queued_ids(), vec![id]);
+    assert_eq!(q.last_queued_id(), Some(id));
+    assert!(
+        q.peek_next_pending().is_none(),
+        "Held items must not be peekable for dispatch"
+    );
+
+    // Updating a held prompt succeeds
+    q.update_prompt(id, "Updated while held".to_string(), None)
+        .unwrap();
+    assert_eq!(q.get(id).unwrap().prompt, "Updated while held");
+
+    // Releasing held items marks them Queued again
+    q.release_held();
+    assert_eq!(q.get(id).unwrap().status, ItemStatus::Queued);
+    assert!(q.peek_next_pending().is_some());
+}

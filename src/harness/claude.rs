@@ -81,4 +81,24 @@ impl HarnessAdapter for ClaudeHarness {
             _ => Some("Claude Code: Active · Ready (no limit observed)".to_string()),
         }
     }
+
+    fn has_active_remaining_quota(
+        &self,
+        target: &AgentTarget,
+        terminal: &dyn TerminalAdapter,
+    ) -> bool {
+        if let Some(prev) = terminal.get_agent_preview(&target.pane_id) {
+            let prev_lower = prev.to_lowercase();
+            if prev_lower.contains("rate limit") || prev_lower.contains("usage limit") {
+                return false;
+            }
+            if prev_lower.contains("tokens")
+                || prev_lower.contains("%")
+                || prev_lower.contains("left")
+            {
+                return true;
+            }
+        }
+        false
+    }
 }

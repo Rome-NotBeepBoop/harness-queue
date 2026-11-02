@@ -341,4 +341,48 @@ impl HarnessAdapter for CodexHarness {
             _ => Some("Codex Quota: Connected · Available".to_string()),
         }
     }
+
+    fn has_active_remaining_quota(
+        &self,
+        target: &AgentTarget,
+        terminal: &dyn TerminalAdapter,
+    ) -> bool {
+        // If terminal explicitly indicates rate-limited or usage limit reached, quota is NOT active
+        if let Ok(AgentStatus::RateLimited) = terminal.get_agent_status(&target.pane_id) {
+            return false;
+        }
+        if let Some(preview) = terminal.get_agent_preview(&target.pane_id) {
+            let prev_lower = preview.to_lowercase();
+            if prev_lower.contains("usage limit")
+                || prev_lower.contains("rate limit")
+                || prev_lower.contains(" 0% left")
+                || prev_lower.contains(": 0% left")
+            {
+                return false;
+            }
+        }
+
+        if let Some(details) = self.get_cached_or_fresh_details() {
+            if details.status == QuotaStatus::Available {
+                // If there's an active quota window with usage (< 100% used), remaining quota is still present
+                if details.used_percent < 100.0
+                    && (details.resets_at.is_some() || details.used_percent > 0.0)
+                {
+                    return true;
+                }
+            }
+        }
+
+        // Also check terminal preview if JSON-RPC wasn't available
+        if let Some(preview) = terminal.get_agent_preview(&target.pane_id) {
+            let prev_lower = preview.to_lowercase();
+            if (prev_lower.contains("limit:") || prev_lower.contains("limit left"))
+                && prev_lower.contains("left")
+            {
+                return true;
+            }
+        }
+
+        false
+    }
 }

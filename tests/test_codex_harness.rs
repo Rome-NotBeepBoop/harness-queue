@@ -98,3 +98,32 @@ fn test_codex_rate_limits_missing_response_fails_safe() {
         _ => {}
     }
 }
+
+#[test]
+fn test_codex_has_active_remaining_quota_from_preview_or_details() {
+    use harness_queue::harness::codex::CodexHarness;
+    use harness_queue::harness::HarnessAdapter;
+    use harness_queue::terminal::mock::MockTerminalAdapter;
+
+    let target = AgentTarget {
+        terminal_id: "term1".to_string(),
+        pane_id: "w1:p2".to_string(),
+        pid: 1234,
+        harness: HarnessKind::Codex,
+        session_id: "sess_1".to_string(),
+        cwd: "/tmp".to_string(),
+    };
+
+    let harness = CodexHarness::new();
+    let terminal = MockTerminalAdapter::new();
+
+    // With active preview showing 10% left
+    terminal.set_preview(Some("⚠ 5h limit: 10% left · resets at 7:46 PM".to_string()));
+    assert!(harness.has_active_remaining_quota(&target, &terminal));
+
+    // When limit is exhausted (rate limited / 0% left)
+    terminal.set_preview(Some(
+        "usage limit reached. Try again at 7:46 PM".to_string(),
+    ));
+    assert!(!harness.has_active_remaining_quota(&target, &terminal));
+}

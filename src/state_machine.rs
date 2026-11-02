@@ -94,6 +94,7 @@ impl StateMachine {
                     | State::RateLimited
                     | State::WaitingForRecovery
                     | State::DeliveryUncertain
+                    | State::Held
             ),
             State::RateLimited => matches!(
                 to,
@@ -103,7 +104,20 @@ impl StateMachine {
             State::RecoveringSession => matches!(to, State::AgentReady | State::Watching),
             State::AgentReady => matches!(
                 to,
-                State::Submitting | State::AgentBusy | State::RateLimited | State::Watching
+                State::Submitting
+                    | State::AgentBusy
+                    | State::RateLimited
+                    | State::Watching
+                    | State::Held
+            ),
+            State::Held => matches!(
+                to,
+                State::RateLimited
+                    | State::WaitingForRecovery
+                    | State::RecoveringSession
+                    | State::AgentReady
+                    | State::AgentBusy
+                    | State::Watching
             ),
             State::Submitting => matches!(
                 to,
