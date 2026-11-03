@@ -48,7 +48,7 @@ fn render_cli_prompt(out: &mut io::Stdout, editing_id: Option<usize>, buffer: &s
     let label = if let Some(id) = editing_id {
         format!("› [EDITING #{}] (Enter: save, Esc: cancel): ", id)
     } else {
-        "› Next prompt (or image path) [Shift+← to edit]: ".to_string()
+        "› Next prompt (or image path) [Shift+↑ to edit]: ".to_string()
     };
     let _ = write!(out, "\r\x1b[K{}{}", label, buffer);
     let cursor_offset = buffer.len().saturating_sub(cursor);
@@ -126,7 +126,7 @@ fn main() {
         println!("  hq --tui [PROMPT]  Launch hq in interactive TUI mode");
         println!("  hq --help          Show this help text\n");
         println!("PROMPT EDITING:");
-        println!("  • Press [Shift + ←] (or click in TUI) to edit any queued prompt.");
+        println!("  • Press [Shift + ↑] (or click in TUI) to edit any queued prompt.");
         println!("  • Press [Enter] to save, [Esc] to cancel.\n");
         println!("IMAGE SUPPORT:");
         println!("  Paste image paths (e.g. @/path/to/img.png or /path/to/img.png).");
@@ -365,8 +365,10 @@ fn main() {
                         break;
                     }
 
-                    // Shift + Left: Edit last / cycle previous queued prompt
-                    if key.modifiers.contains(KeyModifiers::SHIFT) && key.code == KeyCode::Left {
+                    // Shift + Up (or Shift + Left): Edit last / cycle previous queued or held prompt
+                    if key.modifiers.contains(KeyModifiers::SHIFT)
+                        && (key.code == KeyCode::Up || key.code == KeyCode::Left)
+                    {
                         let queued = supervisor.queue.queued_ids();
                         if !queued.is_empty() {
                             let next_id = match cli_editing_id {

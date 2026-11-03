@@ -127,7 +127,7 @@ fn test_tui_app_exit_on_esc() {
 }
 
 #[test]
-fn test_tui_app_edit_via_shift_left() {
+fn test_tui_app_edit_via_shift_up() {
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
     let mut supervisor = create_test_supervisor();
@@ -136,14 +136,14 @@ fn test_tui_app_edit_via_shift_left() {
 
     let mut app = TuiApp::new(&mut supervisor);
 
-    // Press Shift + Left
-    let key_shift_left = KeyEvent {
-        code: KeyCode::Left,
+    // Press Shift + Up
+    let key_shift_up = KeyEvent {
+        code: KeyCode::Up,
         modifiers: KeyModifiers::SHIFT,
         kind: KeyEventKind::Press,
         state: KeyEventState::NONE,
     };
-    app.handle_key(key_shift_left);
+    app.handle_key(key_shift_up);
 
     assert_eq!(app.editing_item_id, Some(1));
     assert_eq!(app.input, "plz continue");
@@ -168,6 +168,52 @@ fn test_tui_app_edit_via_shift_left() {
         app.supervisor.queue.get(1).unwrap().prompt,
         "plz explain the issue"
     );
+    assert!(app.logs.iter().any(|l| l.contains("✓ Prompt #1 updated")));
+}
+
+#[test]
+fn test_tui_app_edit_held_prompt_via_shift_up() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+    use harness_queue::models::ItemStatus;
+
+    let mut supervisor = create_test_supervisor();
+    let id = supervisor.enqueue_prompt("held prompt initial".to_string());
+    supervisor.queue.mark_held(id).unwrap();
+    assert_eq!(supervisor.queue.get(id).unwrap().status, ItemStatus::Held);
+
+    let mut app = TuiApp::new(&mut supervisor);
+
+    // Press Shift + Up to edit the held prompt
+    let key_shift_up = KeyEvent {
+        code: KeyCode::Up,
+        modifiers: KeyModifiers::SHIFT,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    };
+    app.handle_key(key_shift_up);
+
+    assert_eq!(app.editing_item_id, Some(1));
+    assert_eq!(app.input, "held prompt initial");
+    assert_eq!(app.cursor_position, "held prompt initial".len());
+
+    // Modify input
+    app.input = "held prompt updated".to_string();
+    app.cursor_position = app.input.len();
+
+    // Hit enter to save
+    let key_enter = KeyEvent {
+        code: KeyCode::Enter,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    };
+    app.handle_key(key_enter);
+
+    assert_eq!(app.editing_item_id, None);
+    assert_eq!(app.input, "");
+    let updated_item = app.supervisor.queue.get(1).unwrap();
+    assert_eq!(updated_item.prompt, "held prompt updated");
+    assert_eq!(updated_item.status, ItemStatus::Held);
     assert!(app.logs.iter().any(|l| l.contains("✓ Prompt #1 updated")));
 }
 

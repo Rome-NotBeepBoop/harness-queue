@@ -3,6 +3,8 @@ use crate::models::AgentTarget;
 use crate::terminal::herdr::HerdrAdapter;
 use crate::terminal::orca::is_same_or_subfolder;
 use std::process::Command;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GhosttyTerminalEntry {
@@ -115,7 +117,9 @@ pub fn find_ghostty_neighbor(
     NeighborDetection::Ambiguous(targets)
 }
 
-pub struct GhosttyAdapter;
+pub struct GhosttyAdapter {
+    terminals_cache: Mutex<Option<(Instant, Vec<GhosttyTerminalEntry>)>>,
+}
 
 impl Default for GhosttyAdapter {
     fn default() -> Self {
@@ -125,7 +129,9 @@ impl Default for GhosttyAdapter {
 
 impl GhosttyAdapter {
     pub fn new() -> Self {
-        Self
+        Self {
+            terminals_cache: Mutex::new(None),
+        }
     }
 
     fn run_osascript(&self, script: &str) -> Result<String, TerminalError> {
@@ -143,6 +149,14 @@ impl GhosttyAdapter {
     }
 
     fn list_terminals_in_front_tab(&self) -> Result<Vec<GhosttyTerminalEntry>, TerminalError> {
+        if let Ok(guard) = self.terminals_cache.lock() {
+            if let Some((ts, entries)) = &*guard {
+                if ts.elapsed() < Duration::from_millis(400) {
+                    return Ok(entries.clone());
+                }
+            }
+        }
+
         let script = r#"tell application "Ghostty"
     if (count of windows) > 0 then
         set w to front window
@@ -159,7 +173,13 @@ impl GhosttyAdapter {
 end tell"#;
 
         let out = self.run_osascript(script)?;
-        Ok(parse_ghostty_terminals_output(&out))
+        let parsed = parse_ghostty_terminals_output(&out);
+
+        if let Ok(mut guard) = self.terminals_cache.lock() {
+            *guard = Some((Instant::now(), parsed.clone()));
+        }
+
+        Ok(parsed)
     }
 }
 
@@ -211,6 +231,9 @@ end tell"#;
     ) -> Result<DeliveryAck, TerminalError> {
         let script = build_ghostty_send_script(&target.terminal_id, prompt);
         let out = self.run_osascript(&script)?;
+        if let Ok(mut guard) = self.terminals_cache.lock() {
+            *guard = None;
+        }
         if out.contains("ok") {
             Ok(DeliveryAck {
                 acknowledged: true,

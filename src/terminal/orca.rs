@@ -3,6 +3,8 @@ use crate::models::{AgentTarget, HarnessKind};
 use crate::terminal::herdr::HerdrAdapter;
 use serde_json::Value;
 use std::process::Command;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrcaTerminalEntry {
@@ -293,6 +295,7 @@ pub fn find_orca_neighbor(
 
 pub struct OrcaAdapter {
     pub orca_bin: String,
+    terminals_cache: Mutex<Option<(Instant, Vec<OrcaTerminalEntry>)>>,
 }
 
 impl Default for OrcaAdapter {
@@ -312,7 +315,10 @@ impl OrcaAdapter {
                 "orca".to_string()
             }
         });
-        Self { orca_bin: bin }
+        Self {
+            orca_bin: bin,
+            terminals_cache: Mutex::new(None),
+        }
     }
 
     fn run_orca(&self, args: &[&str]) -> Result<String, TerminalError> {
@@ -330,8 +336,22 @@ impl OrcaAdapter {
     }
 
     fn list_terminals(&self) -> Result<Vec<OrcaTerminalEntry>, TerminalError> {
+        if let Ok(guard) = self.terminals_cache.lock() {
+            if let Some((ts, entries)) = &*guard {
+                if ts.elapsed() < Duration::from_millis(400) {
+                    return Ok(entries.clone());
+                }
+            }
+        }
+
         let out = self.run_orca(&["terminal", "list", "--json"])?;
-        parse_orca_terminals_json(&out)
+        let entries = parse_orca_terminals_json(&out)?;
+
+        if let Ok(mut guard) = self.terminals_cache.lock() {
+            *guard = Some((Instant::now(), entries.clone()));
+        }
+
+        Ok(entries)
     }
 }
 
@@ -432,6 +452,9 @@ impl TerminalAdapter for OrcaAdapter {
             .map_err(|e| TerminalError::JsonParseError(e.to_string()))?;
 
         let ok = v.get("ok").and_then(|o| o.as_bool()).unwrap_or(true);
+        if let Ok(mut guard) = self.terminals_cache.lock() {
+            *guard = None;
+        }
         if ok {
             Ok(DeliveryAck {
                 acknowledged: true,

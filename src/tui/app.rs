@@ -29,10 +29,12 @@ pub struct TuiApp<'a> {
     pub last_tick: Instant,
     pub editing_item_id: Option<usize>,
     pub queue_rect: Rect,
+    pub cached_usage_summary: Option<String>,
 }
 
 impl<'a> TuiApp<'a> {
     pub fn new(supervisor: &'a mut Supervisor) -> Self {
+        let cached_usage_summary = supervisor.get_target_usage_summary();
         let mut app = Self {
             supervisor,
             input: String::new(),
@@ -42,6 +44,7 @@ impl<'a> TuiApp<'a> {
             last_tick: Instant::now(),
             editing_item_id: None,
             queue_rect: Rect::default(),
+            cached_usage_summary,
         };
 
         let now_str = current_time_str();
@@ -67,7 +70,7 @@ impl<'a> TuiApp<'a> {
 
     pub fn start_editing(&mut self, id: usize) {
         if let Some(item) = self.supervisor.queue.get(id) {
-            if item.status == ItemStatus::Queued {
+            if item.status == ItemStatus::Queued || item.status == ItemStatus::Held {
                 self.editing_item_id = Some(id);
                 self.input = item.prompt.clone();
                 self.cursor_position = self.input.len();
@@ -187,8 +190,10 @@ impl<'a> TuiApp<'a> {
             return;
         }
 
-        // Shift + Left Arrow: Edit last/previous queued prompt
-        if key_event.modifiers.contains(KeyModifiers::SHIFT) && key_event.code == KeyCode::Left {
+        // Shift + Up Arrow (or Shift + Left): Edit last/previous queued or held prompt
+        if key_event.modifiers.contains(KeyModifiers::SHIFT)
+            && (key_event.code == KeyCode::Up || key_event.code == KeyCode::Left)
+        {
             self.edit_previous_queued_item();
             return;
         }
@@ -283,6 +288,7 @@ impl<'a> TuiApp<'a> {
                 self.add_log(format!("! Supervisor: {}", e));
             }
         }
+        self.cached_usage_summary = self.supervisor.get_target_usage_summary();
     }
 }
 
@@ -694,7 +700,7 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
 
             let margin = if is_short || size.width < 75 { 0 } else { 1 };
             let inner_width = (size.width.saturating_sub(2 + (margin * 2))).max(20) as usize;
-            let usage_summary = app.supervisor.get_target_usage_summary();
+            let usage_summary = app.cached_usage_summary.clone();
 
             let (state_badge, state_badge_len) = match app.supervisor.state_machine.current() {
                 State::Watching => (
@@ -1075,7 +1081,7 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
                         ),
                         Span::raw("Queue  • "),
                         Span::styled(
-                            " [Shift+←] ",
+                            " [Shift+↑] ",
                             Style::default()
                                 .fg(Color::Cyan)
                                 .add_modifier(Modifier::BOLD),
@@ -1099,7 +1105,7 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
                         ),
                         Span::raw("Queue prompt  • "),
                         Span::styled(
-                            " [Shift+←] ",
+                            " [Shift+↑] ",
                             Style::default()
                                 .fg(Color::Cyan)
                                 .add_modifier(Modifier::BOLD),
@@ -1126,16 +1132,22 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
             }
         })?;
 
-        // Handle keyboard and mouse events with 100ms timeout
-        if event::poll(Duration::from_millis(100))? {
-            match event::read()? {
-                Event::Key(key) => {
-                    app.handle_key(key);
+        // Handle keyboard and mouse events with low latency (50ms timeout)
+        if event::poll(Duration::from_millis(50))? {
+            loop {
+                match event::read()? {
+                    Event::Key(key) => {
+                        app.handle_key(key);
+                    }
+                    Event::Mouse(mouse) => {
+                        app.handle_mouse(mouse);
+                    }
+                    _ => {}
                 }
-                Event::Mouse(mouse) => {
-                    app.handle_mouse(mouse);
+                // Drain any pending input events before re-rendering
+                if !event::poll(Duration::from_millis(0))? {
+                    break;
                 }
-                _ => {}
             }
         }
 
