@@ -1,3 +1,4 @@
+pub mod fallback;
 pub mod ghostty;
 pub mod herdr;
 pub mod mock;
