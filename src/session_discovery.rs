@@ -1,4 +1,10 @@
+use crate::models::HarnessKind;
+use rusqlite::OpenFlags;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscoveredSession {
@@ -47,16 +53,15 @@ fn epoch_secs_to_datetime(ts: u64) -> (u32, u32, u32, u32, u32) {
     let min = (sec_in_day % 3600) / 60;
 
     let mut days = (ts / 86400) as i64;
-    // Shift epoch to 0000-03-01
     days += 719468;
     let era = if days >= 0 { days } else { days - 146096 } / 146097;
-    let doe = (days - era * 146097) as u64; // day of era [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // year of era [0, 399]
+    let doe = (days - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
     let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // day of year [0, 365]
-    let mp = (5 * doy + 2) / 153; // month in year [0, 11]
-    let d = doy - (153 * mp + 2) / 5 + 1; // day of month [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // month [1, 12]
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = if m <= 2 { y + 1 } else { y };
 
     (year as u32, m as u32, d as u32, hour, min)
@@ -69,8 +74,6 @@ pub fn parse_iso_or_sqlite_time(raw: &str) -> Option<u64> {
         return None;
     }
 
-    // Expected format: YYYY-MM-DD[ T]HH:MM:SS
-    // Examples: "2026-11-07 22:30:00+00:00", "2026-11-07T11:30:00Z"
     let parts: Vec<&str> = clean.split(|c| c == 'T' || c == ' ').collect();
     if parts.len() < 2 {
         return None;
@@ -121,4 +124,174 @@ fn datetime_to_epoch_secs(year: u32, month: u32, day: u32, hour: u32, min: u32, 
 
     let secs = (days as u64) * 86400 + (hour as u64) * 3600 + (min as u64) * 60 + (sec as u64);
     Some(secs)
+}
+
+pub fn resolve_home_dir() -> PathBuf {
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.trim().is_empty() {
+            return PathBuf::from(home);
+        }
+    }
+    if let Ok(user_profile) = std::env::var("USERPROFILE") {
+        if !user_profile.trim().is_empty() {
+            return PathBuf::from(user_profile);
+        }
+    }
+    PathBuf::from(".")
+}
+
+fn extract_workspace_name(uris_json: &str) -> String {
+    if let Ok(val) = serde_json::from_str::<Value>(uris_json) {
+        if let Some(arr) = val.as_array() {
+            if let Some(first) = arr.first().and_then(|v| v.as_str()) {
+                let clean = first.trim_start_matches("file://");
+                let p = Path::new(clean);
+                if let Some(fname) = p.file_name().and_then(|s| s.to_str()) {
+                    if !fname.is_empty() {
+                        return fname.to_string();
+                    }
+                }
+            }
+        } else if let Some(first) = val.as_str() {
+            let clean = first.trim_start_matches("file://");
+            let p = Path::new(clean);
+            if let Some(fname) = p.file_name().and_then(|s| s.to_str()) {
+                if !fname.is_empty() {
+                    return fname.to_string();
+                }
+            }
+        }
+    }
+    // Fallback: current directory name
+    std::env::current_dir()
+        .ok()
+        .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "workspace".to_string())
+}
+
+/// Discover sessions for Google Antigravity (AGY) from conversation_summaries.db
+pub fn discover_agy_sessions(custom_db_path: Option<&Path>) -> Result<Vec<DiscoveredSession>, String> {
+    let db_path = match custom_db_path {
+        Some(p) => p.to_path_buf(),
+        None => resolve_home_dir()
+            .join(".gemini")
+            .join("antigravity")
+            .join("conversation_summaries.db"),
+    };
+
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let conn = rusqlite::Connection::open_with_flags(&db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(|e| format!("Failed to open AGY conversation_summaries.db: {}", e))?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT conversation_id, title, workspace_uris, last_modified_time
+             FROM conversation_summaries
+             ORDER BY last_modified_time DESC
+             LIMIT 20",
+        )
+        .map_err(|e| format!("Failed to prepare query: {}", e))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            let id: String = row.get(0)?;
+            let title: String = row.get(1).unwrap_or_default();
+            let uris: String = row.get(2).unwrap_or_default();
+            let raw_time: String = row.get(3).unwrap_or_default();
+            Ok((id, title, uris, raw_time))
+        })
+        .map_err(|e| format!("Query failed: {}", e))?;
+
+    let mut sessions = Vec::new();
+    for r in rows.flatten() {
+        let (id, title, uris, raw_time) = r;
+        let ts = parse_iso_or_sqlite_time(&raw_time);
+        let formatted_time = ts.map(format_timestamp).unwrap_or_else(|| "unknown".to_string());
+        let workspace = extract_workspace_name(&uris);
+
+        sessions.push(DiscoveredSession {
+            session_id: id,
+            title,
+            workspace,
+            updated_at: ts,
+            formatted_time,
+        });
+    }
+
+    Ok(sessions)
+}
+
+/// Discover sessions for OpenAI Codex from session_index.jsonl
+pub fn discover_codex_sessions(custom_jsonl_path: Option<&Path>) -> Result<Vec<DiscoveredSession>, String> {
+    let jsonl_path = match custom_jsonl_path {
+        Some(p) => p.to_path_buf(),
+        None => resolve_home_dir()
+            .join(".codex")
+            .join("session_index.jsonl"),
+    };
+
+    if !jsonl_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let file = File::open(&jsonl_path).map_err(|e| format!("Failed to open Codex session_index.jsonl: {}", e))?;
+    let reader = BufReader::new(file);
+
+    let default_workspace = std::env::current_dir()
+        .ok()
+        .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "workspace".to_string());
+
+    let mut sessions = Vec::new();
+    for line_res in reader.lines() {
+        if let Ok(line) = line_res {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Ok(val) = serde_json::from_str::<Value>(trimmed) {
+                let id = val.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if id.is_empty() {
+                    continue;
+                }
+                let title = val
+                    .get("thread_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let updated_raw = val
+                    .get("updated_at")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let ts = parse_iso_or_sqlite_time(updated_raw);
+                let formatted_time = ts.map(format_timestamp).unwrap_or_else(|| "unknown".to_string());
+
+                sessions.push(DiscoveredSession {
+                    session_id: id,
+                    title,
+                    workspace: default_workspace.clone(),
+                    updated_at: ts,
+                    formatted_time,
+                });
+            }
+        }
+    }
+
+    // Sort newest first if updated_at is known
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions.truncate(20);
+
+    Ok(sessions)
+}
+
+/// Discover recent sessions for any given harness kind
+pub fn discover_sessions_for_harness(kind: &HarnessKind) -> Vec<DiscoveredSession> {
+    match kind {
+        HarnessKind::Agy => discover_agy_sessions(None).unwrap_or_default(),
+        HarnessKind::Codex => discover_codex_sessions(None).unwrap_or_default(),
+        _ => Vec::new(),
+    }
 }
