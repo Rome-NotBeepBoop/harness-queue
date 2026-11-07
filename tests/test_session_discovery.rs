@@ -211,4 +211,13 @@ fn test_corrupt_database_returns_empty_vector_not_panic() {
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
 
+#[test]
+fn test_discover_real_agy_sessions() {
+    let sessions = discover_agy_sessions(None).unwrap();
+    if !sessions.is_empty() {
+        assert!(!sessions[0].session_id.is_empty());
+        assert!(!sessions[0].formatted_time.is_empty());
+    }
+}
+
 
