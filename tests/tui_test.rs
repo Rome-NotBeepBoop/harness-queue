@@ -215,6 +215,37 @@ fn test_held_status_badges_in_tui() {
 }
 
 #[test]
+fn test_footer_displays_force_send_when_held() {
+    use harness_queue::tui::app::compute_footer_spans;
+
+    // Normal footer without held prompts (wide)
+    let normal_spans = compute_footer_spans(false, false, 120);
+    let normal_text: String = normal_spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(!normal_text.contains("[alt + m]"));
+    assert!(!normal_text.contains("force-send HELD prompts"));
+
+    // Footer with held prompts (wide >= 115)
+    let held_spans_wide = compute_footer_spans(false, true, 120);
+    let held_text_wide: String = held_spans_wide.iter().map(|s| s.content.as_ref()).collect();
+    assert!(held_text_wide.contains("[alt + m]"));
+    assert!(held_text_wide.contains("force-send HELD prompts"));
+    assert!(held_text_wide.contains("[Shift+↑]"));
+    assert!(held_text_wide.contains("Click queue item"));
+
+    // Footer with held prompts (medium: 75..115)
+    let held_spans_med = compute_footer_spans(false, true, 90);
+    let held_text_med: String = held_spans_med.iter().map(|s| s.content.as_ref()).collect();
+    assert!(held_text_med.contains("[alt + m]"));
+    assert!(held_text_med.contains("force-send HELD prompts"));
+
+    // Footer with held prompts (narrow < 75)
+    let held_spans_narrow = compute_footer_spans(false, true, 60);
+    let held_text_narrow: String = held_spans_narrow.iter().map(|s| s.content.as_ref()).collect();
+    assert!(held_text_narrow.contains("[alt + m]"));
+    assert!(held_text_narrow.contains("force-send HELD"));
+}
+
+#[test]
 fn test_layout_never_hides_middle_on_small_panes() {
     use ratatui::layout::{Constraint, Direction, Layout, Rect};
 

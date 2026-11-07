@@ -18,6 +18,7 @@ pub struct Supervisor {
     pub reported_waiting_quota: bool,
     pub reported_held: bool,
     pub draining_recovered_queue: bool,
+    pub force_send_held: bool,
 }
 
 impl Supervisor {
@@ -39,6 +40,7 @@ impl Supervisor {
             reported_waiting_quota: false,
             reported_held: false,
             draining_recovered_queue: false,
+            force_send_held: false,
         }
     }
 
@@ -108,6 +110,18 @@ impl Supervisor {
         self.queue
             .update_prompt(id, new_prompt, new_attachments)
             .map_err(|e| e.to_string())
+    }
+
+    pub fn force_send_held(&mut self) -> Vec<String> {
+        let mut events = Vec::new();
+        if self.queue.has_held() || self.state_machine.current() == State::Held {
+            self.force_send_held = true;
+            self.reported_held = false;
+            self.queue.release_held();
+            let _ = self.state_machine.transition(State::AgentReady);
+            events.push("⚡ Force-sending HELD prompts (bypassing remaining quota wait)".to_string());
+        }
+        events
     }
 
     pub fn get_target_usage_summary(&self) -> Option<String> {
@@ -201,6 +215,7 @@ impl Supervisor {
             QuotaStatus::Available => {
                 if !self.queue.has_pending() {
                     self.draining_recovered_queue = false;
+                    self.force_send_held = false;
                 }
 
                 if self.reported_waiting_quota {
@@ -210,6 +225,7 @@ impl Supervisor {
                     self.draining_recovered_queue = true;
                     let _ = self.state_machine.transition(State::RecoveringSession);
                 } else if !self.draining_recovered_queue
+                    && !self.force_send_held
                     && self.queue.has_pending()
                     && self
                         .harness
@@ -319,6 +335,7 @@ impl Supervisor {
                         events.push(format!("✓ Prompt #{} sent!", id));
                         if !self.queue.has_pending() {
                             self.draining_recovered_queue = false;
+                            self.force_send_held = false;
                         }
                     }
                     Ok(_) | Err(_) => {

@@ -276,3 +276,57 @@ fn test_tui_app_cancel_edit_on_esc() {
         "keep this unchanged"
     );
 }
+
+#[test]
+fn test_tui_app_alt_m_force_sends_held_prompt() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+
+    let mut supervisor = create_test_supervisor();
+    let id = supervisor.enqueue_prompt("held task prompt".to_string());
+    supervisor.queue.mark_held(id).unwrap();
+    let _ = supervisor.state_machine.transition(State::Held);
+
+    let mut app = TuiApp::new(&mut supervisor);
+    assert!(app.supervisor.queue.has_held());
+
+    // Press Alt + m
+    let key_alt_m = KeyEvent {
+        code: KeyCode::Char('m'),
+        modifiers: KeyModifiers::ALT,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    };
+    app.handle_key(key_alt_m);
+
+    // Prompt should no longer be held
+    assert!(!app.supervisor.queue.has_held());
+    assert_eq!(app.supervisor.queue.get(id).unwrap().status, ItemStatus::Queued);
+    assert!(app.logs.iter().any(|l| l.contains("Force-sending HELD prompts")));
+}
+
+#[test]
+fn test_tui_app_option_m_unicode_char_force_sends_held_prompt() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+
+    let mut supervisor = create_test_supervisor();
+    let id = supervisor.enqueue_prompt("another held task".to_string());
+    supervisor.queue.mark_held(id).unwrap();
+    let _ = supervisor.state_machine.transition(State::Held);
+
+    let mut app = TuiApp::new(&mut supervisor);
+    assert!(app.supervisor.queue.has_held());
+
+    // On macOS, Option + m can deliver the unicode character 'µ'
+    let key_option_m = KeyEvent {
+        code: KeyCode::Char('µ'),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    };
+    app.handle_key(key_option_m);
+
+    // Prompt should no longer be held
+    assert!(!app.supervisor.queue.has_held());
+    assert_eq!(app.supervisor.queue.get(id).unwrap().status, ItemStatus::Queued);
+    assert!(app.logs.iter().any(|l| l.contains("Force-sending HELD prompts")));
+}

@@ -198,6 +198,20 @@ impl<'a> TuiApp<'a> {
             return;
         }
 
+        // Alt + M (or Option + M / 'µ' on macOS): Force-send HELD prompts immediately
+        let is_alt_m = (key_event.modifiers.contains(KeyModifiers::ALT)
+            && (key_event.code == KeyCode::Char('m') || key_event.code == KeyCode::Char('M')))
+            || key_event.code == KeyCode::Char('µ');
+
+        if is_alt_m {
+            if self.supervisor.queue.has_held()
+                || self.supervisor.state_machine.current() == State::Held
+            {
+                self.force_send_held();
+            }
+            return;
+        }
+
         match key_event.code {
             KeyCode::Esc => {
                 if self.editing_item_id.is_some() {
@@ -275,6 +289,14 @@ impl<'a> TuiApp<'a> {
                 }
             }
         }
+    }
+
+    pub fn force_send_held(&mut self) {
+        let events = self.supervisor.force_send_held();
+        for ev in events {
+            self.add_log(ev);
+        }
+        self.tick_supervisor();
     }
 
     pub fn tick_supervisor(&mut self) {
@@ -681,6 +703,203 @@ pub fn compute_item_height(item: &QueueItem, inner_width: usize) -> usize {
     compute_queue_item_lines(item, false, inner_width).len()
 }
 
+pub fn compute_footer_spans(is_editing: bool, has_held: bool, width: u16) -> Vec<Span<'static>> {
+    if is_editing {
+        if width < 65 {
+            vec![
+                Span::styled(
+                    " [Enter] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Save  • "),
+                Span::styled(
+                    " [Esc] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Cancel"),
+            ]
+        } else {
+            vec![
+                Span::styled(
+                    " [Enter] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Save update  • "),
+                Span::styled(
+                    " [Esc] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Cancel edit  • "),
+                Span::styled(
+                    " [Ctrl+C] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Detach cleanly"),
+            ]
+        }
+    } else if has_held {
+        if width < 75 {
+            vec![
+                Span::styled(
+                    " [Enter] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Queue  • "),
+                Span::styled(
+                    " [alt + m] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("force-send HELD  • "),
+                Span::styled(
+                    " [Esc] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Detach"),
+            ]
+        } else if width < 115 {
+            vec![
+                Span::styled(
+                    " [Enter] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Queue prompt  • "),
+                Span::styled(
+                    " [alt + m] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("force-send HELD prompts  • "),
+                Span::styled(
+                    " [Shift+↑] ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Edit  • "),
+                Span::styled(
+                    " [Esc] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Detach"),
+            ]
+        } else {
+            vec![
+                Span::styled(
+                    " [Enter] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Queue prompt  • "),
+                Span::styled(
+                    " [alt + m] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("force-send HELD prompts  • "),
+                Span::styled(
+                    " [Shift+↑] ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("or "),
+                Span::styled(
+                    "Click queue item ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("to edit  • "),
+                Span::styled(
+                    " [Esc] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Detach"),
+            ]
+        }
+    } else if width < 65 {
+        vec![
+            Span::styled(
+                " [Enter] ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Queue  • "),
+            Span::styled(
+                " [Shift+↑] ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Edit  • "),
+            Span::styled(
+                " [Esc] ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Detach"),
+        ]
+    } else {
+        vec![
+            Span::styled(
+                " [Enter] ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Queue prompt  • "),
+            Span::styled(
+                " [Shift+↑] ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("or "),
+            Span::styled(
+                "Click queue item ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("to edit  • "),
+            Span::styled(
+                " [Esc] ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Detach"),
+        ]
+    }
+}
+
 pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
     enable_raw_mode()?;
     let mut stdout = stdout();
@@ -1028,105 +1247,9 @@ pub fn run_tui(supervisor: &mut Supervisor) -> io::Result<()> {
 
             // 4. Footer
             if footer_height > 0 {
-                let footer_text = if app.editing_item_id.is_some() {
-                    if size.width < 65 {
-                        vec![
-                            Span::styled(
-                                " [Enter] ",
-                                Style::default()
-                                    .fg(Color::Yellow)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::raw("Save  • "),
-                            Span::styled(
-                                " [Esc] ",
-                                Style::default()
-                                    .fg(Color::Yellow)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::raw("Cancel"),
-                        ]
-                    } else {
-                        vec![
-                            Span::styled(
-                                " [Enter] ",
-                                Style::default()
-                                    .fg(Color::Yellow)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::raw("Save update  • "),
-                            Span::styled(
-                                " [Esc] ",
-                                Style::default()
-                                    .fg(Color::Yellow)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::raw("Cancel edit  • "),
-                            Span::styled(
-                                " [Ctrl+C] ",
-                                Style::default()
-                                    .fg(Color::Yellow)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::raw("Detach cleanly"),
-                        ]
-                    }
-                } else if size.width < 65 {
-                    vec![
-                        Span::styled(
-                            " [Enter] ",
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw("Queue  • "),
-                        Span::styled(
-                            " [Shift+↑] ",
-                            Style::default()
-                                .fg(Color::Cyan)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw("Edit  • "),
-                        Span::styled(
-                            " [Esc] ",
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw("Detach"),
-                    ]
-                } else {
-                    vec![
-                        Span::styled(
-                            " [Enter] ",
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw("Queue prompt  • "),
-                        Span::styled(
-                            " [Shift+↑] ",
-                            Style::default()
-                                .fg(Color::Cyan)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw("or "),
-                        Span::styled(
-                            "Click queue item ",
-                            Style::default()
-                                .fg(Color::Cyan)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw("to edit  • "),
-                        Span::styled(
-                            " [Esc] ",
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw("Detach"),
-                    ]
-                };
+                let has_held = app.supervisor.queue.has_held();
+                let footer_text =
+                    compute_footer_spans(app.editing_item_id.is_some(), has_held, size.width);
                 let footer_paragraph = Paragraph::new(Line::from(footer_text));
                 f.render_widget(footer_paragraph, chunks[3]);
             }

@@ -104,3 +104,18 @@ fn test_held_queue_lifecycle() {
     assert_eq!(q.get(id).unwrap().status, ItemStatus::Queued);
     assert!(q.peek_next_pending().is_some());
 }
+
+#[test]
+fn test_has_held() {
+    let mut q = QueueEngine::new();
+    assert!(!q.has_held());
+
+    let id = q.enqueue("Prompt".to_string());
+    assert!(!q.has_held());
+
+    q.mark_held(id).unwrap();
+    assert!(q.has_held());
+
+    q.release_held();
+    assert!(!q.has_held());
+}

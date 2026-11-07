@@ -497,6 +497,22 @@ fn run_with_target_and_terminal(
                         continue;
                     }
 
+                    let is_alt_m = (key.modifiers.contains(KeyModifiers::ALT)
+                        && (key.code == KeyCode::Char('m') || key.code == KeyCode::Char('M')))
+                        || key.code == KeyCode::Char('µ');
+                    if is_alt_m {
+                        let events = supervisor.force_send_held();
+                        if !events.is_empty() {
+                            let _ = write!(stdout, "\r\x1b[K");
+                            for ev in events {
+                                let _ = write!(stdout, "{}\r\n", ev);
+                            }
+                            let _ = write!(stdout, "\r\n");
+                        }
+                        render_cli_prompt(&mut stdout, cli_editing_id, &input_buffer, cursor_idx);
+                        continue;
+                    }
+
                     match key.code {
                         KeyCode::Enter => {
                             let trimmed = input_buffer.trim().to_string();
@@ -555,6 +571,20 @@ fn run_with_target_and_terminal(
                                             continue;
                                         }
                                     }
+                                }
+                                input_buffer.clear();
+                                cursor_idx = 0;
+                                render_cli_prompt(&mut stdout, None, &input_buffer, cursor_idx);
+                            } else if trimmed == "force" || trimmed == "send" || trimmed == "send-anyway" {
+                                let events = supervisor.force_send_held();
+                                if !events.is_empty() {
+                                    let _ = write!(stdout, "\r\x1b[K");
+                                    for ev in events {
+                                        let _ = write!(stdout, "{}\r\n", ev);
+                                    }
+                                    let _ = write!(stdout, "\r\n");
+                                } else {
+                                    let _ = write!(stdout, "\r\x1b[K! No HELD prompts to force-send\r\n\r\n");
                                 }
                                 input_buffer.clear();
                                 cursor_idx = 0;

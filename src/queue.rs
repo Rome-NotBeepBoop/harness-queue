@@ -84,6 +84,10 @@ impl QueueEngine {
             .any(|i| i.status == ItemStatus::Queued || i.status == ItemStatus::Held)
     }
 
+    pub fn has_held(&self) -> bool {
+        self.items.iter().any(|i| i.status == ItemStatus::Held)
+    }
+
     pub fn mark_held(&mut self, id: usize) -> Result<(), QueueError> {
         let item = self.get_mut(id).ok_or(QueueError::ItemNotFound(id))?;
         if item.status == ItemStatus::Queued {

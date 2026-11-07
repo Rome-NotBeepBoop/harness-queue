@@ -1,7 +1,7 @@
 use harness_queue::harness::mock::MockHarness;
 use harness_queue::harness::QuotaStatus;
 use harness_queue::models::{
-    AgentTarget, HarnessKind, ItemStatus, Mode, DEFAULT_CONTINUATION_PROMPT,
+    AgentTarget, HarnessKind, ItemStatus, Mode, State, DEFAULT_CONTINUATION_PROMPT,
 };
 use harness_queue::supervisor::Supervisor;
 use harness_queue::terminal::mock::MockTerminalAdapter;
@@ -223,4 +223,55 @@ fn test_target_death_halts_supervisor() {
     let res = sup.tick();
     assert!(res.is_err());
     assert!(res.unwrap_err().contains("changed or died"));
+}
+
+#[test]
+fn test_supervisor_force_send_held_prompts() {
+    let terminal = Arc::new(MockTerminalAdapter::new());
+    let harness = Arc::new(MockHarness::new(HarnessKind::Codex));
+
+    // Agent has active remaining quota
+    harness.set_active_remaining_quota(true);
+
+    let mut sup = Supervisor::new(terminal.clone(), harness.clone(), Mode::AutoSend);
+    sup.initialize().unwrap();
+
+    let id = sup.enqueue_prompt("Run task despite remaining quota".to_string());
+    assert_eq!(id, 1);
+
+    // First tick: remaining quota holds the prompt
+    let events = sup.tick().expect("tick with active remaining quota");
+    assert!(events
+        .iter()
+        .any(|e| e.contains("Agent has remaining quota. Queue is HELD")));
+    assert_eq!(sup.state_machine.current(), State::Held);
+    assert_eq!(sup.queue.get(1).unwrap().status, ItemStatus::Held);
+    assert_eq!(
+        terminal
+            .prompt_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+
+    // User triggers force-send
+    let force_events = sup.force_send_held();
+    assert!(force_events
+        .iter()
+        .any(|e| e.contains("Force-sending HELD prompts")));
+    assert_eq!(sup.state_machine.current(), State::AgentReady);
+    assert_eq!(sup.queue.get(1).unwrap().status, ItemStatus::Queued);
+    assert!(sup.force_send_held);
+
+    // Next tick: dispatches the prompt immediately even though remaining quota was active!
+    let dispatch_events = sup.tick().expect("tick after force send");
+    assert!(dispatch_events.iter().any(|e| e.contains("Prompt #1 sent!")));
+    assert_eq!(sup.queue.get(1).unwrap().status, ItemStatus::Acknowledged);
+    assert_eq!(
+        terminal
+            .prompt_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    // Queue is empty now, so force_send_held flag resets
+    assert!(!sup.force_send_held);
 }
