@@ -1,4 +1,3 @@
-#!/usr/bin/env -S just --justfile
 # Harness Queue (hq) Justfile
 # Use `just` or `just run` to run hq directly without manually installing binaries.
 
