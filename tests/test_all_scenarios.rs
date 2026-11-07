@@ -424,3 +424,34 @@ fn scenario_20_unsupported_harness_capabilities_reported_truthfully() {
     assert_eq!(codex_caps.level, SupportLevel::Full);
     assert!(codex_caps.can_check_quota);
 }
+
+// Scenario 21: Fallback adapter integration with Supervisor.
+#[test]
+fn test_fallback_adapter_supervisor_lifecycle() {
+    use harness_queue::models::{AgentTarget, HarnessKind, Mode};
+    use harness_queue::supervisor::Supervisor;
+    use harness_queue::terminal::fallback::FallbackAdapter;
+    use std::sync::Arc;
+
+    let target = AgentTarget {
+        terminal_id: "standalone".to_string(),
+        pane_id: "tab_agent".to_string(),
+        pid: 0,
+        harness: HarnessKind::Agy,
+        session_id: "sess-agy-fallback".to_string(),
+        cwd: "/Users/romey/Developer/harness-queue".to_string(),
+    };
+
+    let fallback_terminal = Arc::new(FallbackAdapter::new(target.clone(), false));
+    let agy_harness = Arc::from(create_harness_adapter(&HarnessKind::Agy));
+
+    let mut supervisor = Supervisor::new(fallback_terminal.clone(), agy_harness, Mode::AutoSend);
+    supervisor.target = Some(target.clone());
+    let _ = supervisor.state_machine.transition(harness_queue::models::State::SelectingMode);
+    let _ = supervisor.state_machine.transition(harness_queue::models::State::Watching);
+
+    assert_eq!(fallback_terminal.terminal_name(), "Terminal (Fallback)");
+    let id = supervisor.enqueue_prompt("test fallback prompt".to_string());
+    assert_eq!(id, 1);
+}
+

@@ -1,15 +1,18 @@
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use harness_queue::cli::{
-    format_boxed_header, format_mode_prompt, format_not_detected_guide, read_initial_input,
-    read_prompt_input, select_ambiguous_target, InitialChoice,
+    format_boxed_header, format_fallback_notification, format_mode_prompt,
+    read_initial_input, read_prompt_input, select_ambiguous_target,
+    select_fallback_agent_target, select_session_menu, InitialChoice,
 };
 use harness_queue::harness::create_harness_adapter;
 use harness_queue::image::{
     describe_attachments, extract_image_references, format_prompt_with_images,
 };
-use harness_queue::models::{AgentTarget, ItemStatus, Mode, DEFAULT_CONTINUATION_PROMPT};
+use harness_queue::models::{AgentTarget, HarnessKind, ItemStatus, Mode, DEFAULT_CONTINUATION_PROMPT};
+use harness_queue::session_discovery::discover_sessions_for_harness;
 use harness_queue::supervisor::Supervisor;
+use harness_queue::terminal::fallback::FallbackAdapter;
 use harness_queue::terminal::ghostty::GhosttyAdapter;
 use harness_queue::terminal::herdr::HerdrAdapter;
 use harness_queue::terminal::orca::OrcaAdapter;
@@ -24,6 +27,7 @@ use std::time::Duration;
 static RUNNING: AtomicBool = AtomicBool::new(true);
 static ATTACHED: AtomicBool = AtomicBool::new(false);
 
+#[cfg(unix)]
 extern "C" fn sigint_handler(_: i32) {
     if !ATTACHED.load(Ordering::SeqCst) {
         unsafe {
@@ -113,6 +117,7 @@ fn detect_terminal_environment() -> Option<Arc<dyn TerminalAdapter>> {
 }
 
 fn main() {
+    #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGINT, sigint_handler as *const () as usize); // SIGINT (Ctrl+C)
     }
@@ -124,6 +129,9 @@ fn main() {
         println!("  hq [PROMPT]        Launch hq in default CLI mode");
         println!("  hq --cli [PROMPT]  Launch hq explicitly in CLI mode");
         println!("  hq --tui [PROMPT]  Launch hq in interactive TUI mode");
+        println!("  hq --select-agent  Force terminal agent selection mode");
+        println!("  hq --agent <NAME>  Pre-select agent harness (agy, codex, claude, opencode, omp, pi)");
+        println!("  hq --clipboard     Copy dispatched prompts to system clipboard");
         println!("  hq --help          Show this help text\n");
         println!("PROMPT EDITING:");
         println!("  • Press [Shift + ↑] (or click in TUI) to edit any queued prompt.");
@@ -136,19 +144,51 @@ fn main() {
         println!("ENVIRONMENTS:");
         println!("  • Orca IDE         Native terminal API & split panes");
         println!("  • Herdr            Terminal pane manager & agent IPC");
-        println!("  • Ghostty          macOS terminal emulator & split panes\n");
+        println!("  • Ghostty          macOS terminal emulator & split panes");
+        println!("  • Windows Terminal Standalone pane & tab fallback\n");
         println!("SUPPORTED AGENTS:");
         println!("  Codex, Claude Code, OpenCode, OMP, Pi, Google Antigravity (AGY)");
         return;
     }
 
     let is_tui = args.iter().any(|a| a == "--tui");
-    let positional_args: Vec<String> = args
-        .iter()
-        .skip(1)
-        .filter(|a| *a != "--tui" && *a != "--cli")
-        .cloned()
-        .collect();
+    let force_select_agent = args.iter().any(|a| a == "--select-agent");
+    let clipboard_enabled = args.iter().any(|a| a == "--clipboard");
+
+    let preselected_harness = if let Some(pos) = args.iter().position(|a| a == "--agent" || a == "-a") {
+        if pos + 1 < args.len() {
+            match args[pos + 1].to_lowercase().as_str() {
+                "agy" | "antigravity" => Some(HarnessKind::Agy),
+                "codex" => Some(HarnessKind::Codex),
+                "claude" | "claude-code" => Some(HarnessKind::ClaudeCode),
+                "opencode" => Some(HarnessKind::OpenCode),
+                "omp" => Some(HarnessKind::Omp),
+                "pi" => Some(HarnessKind::Pi),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut skip_next = false;
+    let mut positional_args: Vec<String> = Vec::new();
+    for a in args.iter().skip(1) {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if a == "--agent" || a == "-a" {
+            skip_next = true;
+            continue;
+        }
+        if a == "--tui" || a == "--cli" || a == "--select-agent" || a == "--clipboard" {
+            continue;
+        }
+        positional_args.push(a.clone());
+    }
 
     let cli_initial_prompt: Option<String> = if !positional_args.is_empty() {
         let joined = positional_args.join(" ");
@@ -162,49 +202,96 @@ fn main() {
         None
     };
 
-    // 1. Detect terminal adapter (Orca IDE, Herdr, or Ghostty)
-    let terminal = match detect_terminal_environment() {
-        Some(t) => t,
-        None => {
-            eprint!("{}", format_not_detected_guide());
-            std::process::exit(1);
-        }
-    };
+    let run_fallback_flow = |preselected: Option<HarnessKind>| -> AgentTarget {
+        let stdout = io::stdout();
+        let mut out = stdout.lock();
+        let stdin = io::stdin();
+        let mut reader = BufReader::new(stdin.lock());
 
-    // 2. Discover caller terminal pane and adjacent agent
-    let current_pane = match terminal.detect_current_pane() {
-        Ok(cp) => cp,
-        Err(e) => {
-            eprintln!("Error detecting current terminal pane: {}", e);
-            std::process::exit(1);
-        }
-    };
+        let _ = write!(out, "{}", format_fallback_notification());
+        let _ = out.flush();
 
-    let target: AgentTarget = match terminal.find_adjacent_agent(&current_pane) {
-        Ok(NeighborDetection::Exact(t)) => t,
-        Ok(NeighborDetection::Ambiguous(list)) => {
-            let stdout = io::stdout();
-            let mut out = stdout.lock();
-            let stdin = io::stdin();
-            let mut reader = BufReader::new(stdin.lock());
-            match select_ambiguous_target(&mut reader, &mut out, &list) {
-                Some(selected) => selected,
-                None => {
-                    let _ = writeln!(out, "\n✓ Cancelled");
-                    let _ = out.flush();
-                    std::process::exit(0);
-                }
+        let target_opt = if let Some(harness) = preselected {
+            let sessions = discover_sessions_for_harness(&harness);
+            select_session_menu(&mut reader, &mut out, &harness, &sessions)
+        } else {
+            select_fallback_agent_target(&mut reader, &mut out)
+        };
+
+        match target_opt {
+            Some(t) => t,
+            None => {
+                let _ = writeln!(out, "\n✓ Cancelled");
+                let _ = out.flush();
+                std::process::exit(0);
             }
         }
-        Ok(NeighborDetection::NoneFound(msg)) => {
-            eprintln!("Error: {}", msg);
-            std::process::exit(1);
-        }
-        Err(e) => {
-            eprintln!("Terminal error: {}", e);
-            std::process::exit(1);
-        }
     };
+
+    // Terminal Adapter & Agent Target pairing (Multiplexed or Fallback Selection)
+    let (terminal, target, current_pane): (Arc<dyn TerminalAdapter>, AgentTarget, String) =
+        if force_select_agent {
+            let target = run_fallback_flow(preselected_harness);
+            let adapter = Arc::new(FallbackAdapter::new(target.clone(), clipboard_enabled));
+            (adapter, target, "standalone_pane".to_string())
+        } else {
+            match detect_terminal_environment() {
+                None => {
+                    let target = run_fallback_flow(preselected_harness);
+                    let adapter = Arc::new(FallbackAdapter::new(target.clone(), clipboard_enabled));
+                    (adapter, target, "standalone_pane".to_string())
+                }
+                Some(det_terminal) => {
+                    let cur_pane_res = det_terminal.detect_current_pane();
+                    if let Ok(cur_pane) = cur_pane_res {
+                        match det_terminal.find_adjacent_agent(&cur_pane) {
+                            Ok(NeighborDetection::Exact(t)) => (det_terminal, t, cur_pane),
+                            Ok(NeighborDetection::Ambiguous(list)) => {
+                                let stdout = io::stdout();
+                                let mut out = stdout.lock();
+                                let stdin = io::stdin();
+                                let mut reader = BufReader::new(stdin.lock());
+                                match select_ambiguous_target(&mut reader, &mut out, &list) {
+                                    Some(selected) => (det_terminal, selected, cur_pane),
+                                    None => {
+                                        let _ = writeln!(out, "\n✓ Cancelled");
+                                        let _ = out.flush();
+                                        std::process::exit(0);
+                                    }
+                                }
+                            }
+                            _ => {
+                                // NoneFound or TerminalError -> Fallback
+                                let target = run_fallback_flow(preselected_harness);
+                                let adapter = Arc::new(FallbackAdapter::new(target.clone(), clipboard_enabled));
+                                (adapter, target, "standalone_pane".to_string())
+                            }
+                        }
+                    } else {
+                        let target = run_fallback_flow(preselected_harness);
+                        let adapter = Arc::new(FallbackAdapter::new(target.clone(), clipboard_enabled));
+                        (adapter, target, "standalone_pane".to_string())
+                    }
+                }
+            }
+        };
+
+    run_with_target_and_terminal(
+        is_tui,
+        cli_initial_prompt,
+        terminal,
+        target,
+        current_pane,
+    );
+}
+
+fn run_with_target_and_terminal(
+    is_tui: bool,
+    cli_initial_prompt: Option<String>,
+    terminal: Arc<dyn TerminalAdapter>,
+    target: AgentTarget,
+    current_pane: String,
+) {
 
     let harness = Arc::from(create_harness_adapter(&target.harness));
 
