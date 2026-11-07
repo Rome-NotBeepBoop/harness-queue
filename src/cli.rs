@@ -1,4 +1,5 @@
-use crate::models::{AgentTarget, Mode};
+use crate::models::{AgentTarget, HarnessKind, Mode};
+use crate::session_discovery::{discover_sessions_for_harness, format_session_label, DiscoveredSession};
 use std::io::{BufRead, Write};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -286,3 +287,156 @@ pub fn read_prompt_input<R: BufRead, W: Write>(
         InputEvent::Empty | InputEvent::Eof => None,
     }
 }
+
+pub fn format_fallback_notification() -> &'static str {
+    "! No Herdr, Orca, or Ghostty terminal panes detected.\n› Falling back to Terminal Agent Selection...\n"
+}
+
+pub fn select_harness_menu<R: BufRead, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+) -> Option<HarnessKind> {
+    let _ = writeln!(writer, "\n? Select agent harness:");
+    let _ = writeln!(writer, "  1) Google Antigravity (AGY)");
+    let _ = writeln!(writer, "  2) OpenAI Codex");
+    let _ = writeln!(writer, "  3) Claude Code");
+    let _ = writeln!(writer, "  4) OpenCode");
+    let _ = writeln!(writer, "  5) OMP");
+    let _ = writeln!(writer, "  6) Pi");
+    let _ = write!(writer, "› Choice [1]: ");
+    let _ = writer.flush();
+
+    let mut line = String::new();
+    match reader.read_line(&mut line) {
+        Ok(0) => None, // EOF / Cancelled
+        Ok(_) => {
+            let trimmed = line.trim();
+            if trimmed.eq_ignore_ascii_case("q") || trimmed.eq_ignore_ascii_case("exit") {
+                return None;
+            }
+            match trimmed {
+                "" | "1" => Some(HarnessKind::Agy),
+                "2" => Some(HarnessKind::Codex),
+                "3" => Some(HarnessKind::ClaudeCode),
+                "4" => Some(HarnessKind::OpenCode),
+                "5" => Some(HarnessKind::Omp),
+                "6" => Some(HarnessKind::Pi),
+                _ => Some(HarnessKind::Agy),
+            }
+        }
+        Err(_) => None,
+    }
+}
+
+pub fn select_session_menu<R: BufRead, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    harness: &HarnessKind,
+    sessions: &[DiscoveredSession],
+) -> Option<AgentTarget> {
+    let _ = writeln!(writer, "\n? Select session for {}:", harness.display_name());
+
+    let mut custom_idx = 1;
+    if !sessions.is_empty() {
+        for (idx, sess) in sessions.iter().enumerate() {
+            let label = format_session_label(sess);
+            let _ = writeln!(writer, "  {}) {}", idx + 1, label);
+        }
+        custom_idx = sessions.len() + 1;
+    }
+
+    let _ = writeln!(writer, "  {}) [Enter custom session ID or start new]", custom_idx);
+    let _ = write!(writer, "› Select session [1]: ");
+    let _ = writer.flush();
+
+    let mut line = String::new();
+    let choice_idx = match reader.read_line(&mut line) {
+        Ok(0) => return None,
+        Ok(_) => {
+            let trimmed = line.trim();
+            if trimmed.eq_ignore_ascii_case("q") || trimmed.eq_ignore_ascii_case("exit") {
+                return None;
+            }
+            if trimmed.is_empty() {
+                1
+            } else {
+                trimmed.parse::<usize>().unwrap_or(1)
+            }
+        }
+        Err(_) => return None,
+    };
+
+    let default_cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| ".".to_string());
+
+    if choice_idx >= 1 && choice_idx <= sessions.len() {
+        let chosen = &sessions[choice_idx - 1];
+        let cwd = if chosen.workspace != "default" && !chosen.workspace.is_empty() {
+            chosen.workspace.clone()
+        } else {
+            default_cwd
+        };
+
+        Some(AgentTarget {
+            terminal_id: "standalone".to_string(),
+            pane_id: "tab_agent".to_string(),
+            pid: 0,
+            harness: harness.clone(),
+            session_id: chosen.session_id.clone(),
+            cwd,
+        })
+    } else {
+        // Custom session entry
+        let _ = write!(writer, "› Enter session ID: ");
+        let _ = writer.flush();
+        let mut sess_line = String::new();
+        let custom_id = match reader.read_line(&mut sess_line) {
+            Ok(0) => return None,
+            Ok(_) => {
+                let t = sess_line.trim().to_string();
+                if t.is_empty() {
+                    "new-session".to_string()
+                } else {
+                    t
+                }
+            }
+            Err(_) => return None,
+        };
+
+        let _ = write!(writer, "› Enter worktree / folder path [{}]: ", default_cwd);
+        let _ = writer.flush();
+        let mut cwd_line = String::new();
+        let custom_cwd = match reader.read_line(&mut cwd_line) {
+            Ok(0) => default_cwd,
+            Ok(_) => {
+                let t = cwd_line.trim().to_string();
+                if t.is_empty() {
+                    default_cwd
+                } else {
+                    t
+                }
+            }
+            Err(_) => default_cwd,
+        };
+
+        Some(AgentTarget {
+            terminal_id: "standalone".to_string(),
+            pane_id: "tab_agent".to_string(),
+            pid: 0,
+            harness: harness.clone(),
+            session_id: custom_id,
+            cwd: custom_cwd,
+        })
+    }
+}
+
+pub fn select_fallback_agent_target<R: BufRead, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+) -> Option<AgentTarget> {
+    let harness = select_harness_menu(reader, writer)?;
+    let sessions = discover_sessions_for_harness(&harness);
+    select_session_menu(reader, writer, &harness, &sessions)
+}
+
