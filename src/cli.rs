@@ -144,9 +144,21 @@ pub fn format_mode_prompt() -> String {
         .to_string()
 }
 
+pub fn is_cancel_input(s: &str) -> bool {
+    let trimmed = s.trim();
+    trimmed.contains('\x03') // Ctrl+C (ETX)
+        || trimmed.contains('\x04') // Ctrl+D (EOT)
+        || trimmed.eq_ignore_ascii_case("q")
+        || trimmed.eq_ignore_ascii_case("exit")
+        || trimmed.eq_ignore_ascii_case("cancel")
+}
+
 pub fn read_mode_selection<R: BufRead>(reader: &mut R) -> Mode {
     let mut line = String::new();
     if reader.read_line(&mut line).is_ok() {
+        if is_cancel_input(&line) {
+            return Mode::AutoResume;
+        }
         let trimmed = line.trim();
         if trimmed == "2" {
             return Mode::AutoSend;
@@ -167,6 +179,9 @@ pub fn read_initial_input<R: BufRead>(reader: &mut R) -> InitialChoice {
     match reader.read_line(&mut line) {
         Ok(0) => InitialChoice::Cancelled, // EOF (Ctrl+D)
         Ok(_) => {
+            if is_cancel_input(&line) {
+                return InitialChoice::Cancelled;
+            }
             let trimmed = line.trim();
             if trimmed.is_empty() || trimmed == "1" {
                 InitialChoice::AutoResume
@@ -219,10 +234,10 @@ pub fn select_ambiguous_target<R: BufRead, W: Write>(
     match reader.read_line(&mut line) {
         Ok(0) => None, // EOF / Cancelled
         Ok(_) => {
-            let trimmed = line.trim();
-            if trimmed.eq_ignore_ascii_case("q") || trimmed.eq_ignore_ascii_case("exit") {
+            if is_cancel_input(&line) {
                 return None;
             }
+            let trimmed = line.trim();
             if trimmed.is_empty() {
                 return Some(targets[0].clone());
             }
@@ -249,6 +264,9 @@ pub fn read_prompt_event<R: BufRead, W: Write>(
     match reader.read_line(&mut first_line) {
         Ok(0) => InputEvent::Eof,
         Ok(_) => {
+            if is_cancel_input(&first_line) {
+                return InputEvent::Eof;
+            }
             let trimmed = first_line.trim_end_matches(&['\r', '\n'][..]);
             if trimmed.is_empty() {
                 return InputEvent::Empty;
@@ -263,6 +281,9 @@ pub fn read_prompt_event<R: BufRead, W: Write>(
                 match reader.read_line(&mut next_line) {
                     Ok(0) => break,
                     Ok(_) => {
+                        if is_cancel_input(&next_line) {
+                            return InputEvent::Eof;
+                        }
                         let next_trimmed = next_line.trim_end_matches(&['\r', '\n'][..]);
                         full_prompt.push('\n');
                         full_prompt.push_str(next_trimmed);
@@ -310,10 +331,10 @@ pub fn select_harness_menu<R: BufRead, W: Write>(
     match reader.read_line(&mut line) {
         Ok(0) => None, // EOF / Cancelled
         Ok(_) => {
-            let trimmed = line.trim();
-            if trimmed.eq_ignore_ascii_case("q") || trimmed.eq_ignore_ascii_case("exit") {
+            if is_cancel_input(&line) {
                 return None;
             }
+            let trimmed = line.trim();
             match trimmed {
                 "" | "1" => Some(HarnessKind::Agy),
                 "2" => Some(HarnessKind::Codex),
@@ -353,14 +374,17 @@ pub fn select_session_menu<R: BufRead, W: Write>(
     let choice_idx = match reader.read_line(&mut line) {
         Ok(0) => return None,
         Ok(_) => {
-            let trimmed = line.trim();
-            if trimmed.eq_ignore_ascii_case("q") || trimmed.eq_ignore_ascii_case("exit") {
+            if is_cancel_input(&line) {
                 return None;
             }
+            let trimmed = line.trim();
             if trimmed.is_empty() {
                 1
             } else {
-                trimmed.parse::<usize>().unwrap_or(1)
+                match trimmed.parse::<usize>() {
+                    Ok(n) => n,
+                    Err(_) => 1,
+                }
             }
         }
         Err(_) => return None,
@@ -396,10 +420,10 @@ pub fn select_session_menu<R: BufRead, W: Write>(
         let custom_id = match reader.read_line(&mut sess_line) {
             Ok(0) => return None,
             Ok(_) => {
-                let t = sess_line.trim().to_string();
-                if t.eq_ignore_ascii_case("q") || t.eq_ignore_ascii_case("exit") {
+                if is_cancel_input(&sess_line) {
                     return None;
                 }
+                let t = sess_line.trim().to_string();
                 if t.is_empty() {
                     "new-session".to_string()
                 } else {
@@ -413,19 +437,19 @@ pub fn select_session_menu<R: BufRead, W: Write>(
         let _ = writer.flush();
         let mut cwd_line = String::new();
         let custom_cwd = match reader.read_line(&mut cwd_line) {
-            Ok(0) => default_cwd,
+            Ok(0) => return None,
             Ok(_) => {
-                let t = cwd_line.trim().to_string();
-                if t.eq_ignore_ascii_case("q") || t.eq_ignore_ascii_case("exit") {
+                if is_cancel_input(&cwd_line) {
                     return None;
                 }
+                let t = cwd_line.trim().to_string();
                 if t.is_empty() {
                     default_cwd
                 } else {
                     t
                 }
             }
-            Err(_) => default_cwd,
+            Err(_) => return None,
         };
 
         Some(AgentTarget {

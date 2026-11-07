@@ -40,6 +40,49 @@ extern "C" fn sigint_handler(_: i32) {
     }
 }
 
+#[cfg(unix)]
+fn init_ctrl_c_handler() {
+    unsafe {
+        let mut sa: libc::sigaction = std::mem::zeroed();
+        sa.sa_sigaction = sigint_handler as *const () as usize;
+        libc::sigemptyset(&mut sa.sa_mask);
+        sa.sa_flags = 0; // Not SA_RESTART: will interrupt blocking read() with EINTR
+        libc::sigaction(libc::SIGINT, &sa, std::ptr::null_mut());
+        libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut());
+    }
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn win_ctrl_handler(ctrl_type: u32) -> i32 {
+    if ctrl_type == 0 || ctrl_type == 1 || ctrl_type == 2 {
+        if !ATTACHED.load(Ordering::SeqCst) {
+            println!("\r\n\r\n✓ Cancelled");
+            std::process::exit(0);
+        } else {
+            RUNNING.store(false, Ordering::SeqCst);
+            1
+        }
+    } else {
+        0
+    }
+}
+
+#[cfg(windows)]
+fn init_ctrl_c_handler() {
+    extern "system" {
+        fn SetConsoleCtrlHandler(
+            handler: Option<unsafe extern "system" fn(u32) -> i32>,
+            add: i32,
+        ) -> i32;
+    }
+    unsafe {
+        SetConsoleCtrlHandler(Some(win_ctrl_handler), 1);
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn init_ctrl_c_handler() {}
+
 struct RawModeGuard;
 
 impl Drop for RawModeGuard {
@@ -117,10 +160,7 @@ fn detect_terminal_environment() -> Option<Arc<dyn TerminalAdapter>> {
 }
 
 fn main() {
-    #[cfg(unix)]
-    unsafe {
-        libc::signal(libc::SIGINT, sigint_handler as *const () as usize); // SIGINT (Ctrl+C)
-    }
+    init_ctrl_c_handler();
 
     let args: Vec<String> = env::args().collect();
     if args.iter().any(|a| a == "-h" || a == "--help") {
@@ -317,7 +357,11 @@ fn run_with_target_and_terminal(
             supervisor.enqueue_prompt_with_attachments(formatted, desc);
         }
 
-        if let Err(e) = run_tui(&mut supervisor) {
+        ATTACHED.store(true, Ordering::SeqCst);
+        let tui_res = run_tui(&mut supervisor);
+        ATTACHED.store(false, Ordering::SeqCst);
+
+        if let Err(e) = tui_res {
             eprintln!("TUI error: {}", e);
             std::process::exit(1);
         }
@@ -362,12 +406,14 @@ fn run_with_target_and_terminal(
             InitialChoice::AutoSend(None) => {
                 let p =
                     read_prompt_input(&mut reader, &mut out, "\n› Enter prompt (or image path):\n");
-                if p.is_none() && !RUNNING.load(Ordering::SeqCst) {
-                    let _ = writeln!(out, "\n✓ Cancelled");
-                    let _ = out.flush();
-                    std::process::exit(0);
+                match p {
+                    Some(text) => (Mode::AutoSend, Some(text)),
+                    None => {
+                        let _ = writeln!(out, "\n✓ Cancelled");
+                        let _ = out.flush();
+                        std::process::exit(0);
+                    }
                 }
-                (Mode::AutoSend, p)
             }
             InitialChoice::AutoSend(Some(prompt)) => (Mode::AutoSend, Some(prompt)),
         }

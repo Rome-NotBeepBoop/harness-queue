@@ -40,3 +40,64 @@ fn test_select_fallback_agent_cancelled_on_q() {
     let target = select_fallback_agent_target(&mut input, &mut output);
     assert!(target.is_none());
 }
+
+#[test]
+fn test_select_fallback_agent_cancelled_on_ctrl_c_at_harness_menu() {
+    // \x03 is Ctrl+C (ETX)
+    let mut input = Cursor::new(b"\x03\n");
+    let mut output = Vec::new();
+
+    let target = select_fallback_agent_target(&mut input, &mut output);
+    assert!(target.is_none(), "Should cancel when user hits Ctrl+C at harness menu");
+}
+
+#[test]
+fn test_select_fallback_agent_cancelled_on_ctrl_c_at_session_menu() {
+    // "1" selects AGY, then \x03\n cancels at session menu
+    let mut input = Cursor::new(b"1\n\x03\n");
+    let mut output = Vec::new();
+
+    let target = select_fallback_agent_target(&mut input, &mut output);
+    assert!(target.is_none(), "Should cancel when user hits Ctrl+C at session selection menu");
+}
+
+#[test]
+fn test_select_fallback_agent_cancelled_on_ctrl_c_at_custom_session_id() {
+    // "1" (AGY), "999" (custom), then \x03\n at session ID prompt
+    let mut input = Cursor::new(b"1\n999\n\x03\n");
+    let mut output = Vec::new();
+
+    let target = select_fallback_agent_target(&mut input, &mut output);
+    assert!(target.is_none(), "Should cancel when user hits Ctrl+C at custom session ID prompt");
+}
+
+#[test]
+fn test_select_fallback_agent_cancelled_on_ctrl_c_at_folder_path() {
+    // "1" (AGY), "999" (custom), "sess-1\n", then \x03\n at folder path prompt
+    let mut input = Cursor::new(b"1\n999\nsess-1\n\x03\n");
+    let mut output = Vec::new();
+
+    let target = select_fallback_agent_target(&mut input, &mut output);
+    assert!(target.is_none(), "Should cancel when user hits Ctrl+C at folder path prompt");
+}
+
+#[test]
+fn test_is_cancel_input_matches_signals_and_words() {
+    use harness_queue::cli::is_cancel_input;
+
+    assert!(is_cancel_input("\x03"));
+    assert!(is_cancel_input("\x03\n"));
+    assert!(is_cancel_input("  \x03  "));
+    assert!(is_cancel_input("\x04"));
+    assert!(is_cancel_input("q"));
+    assert!(is_cancel_input("Q"));
+    assert!(is_cancel_input("exit"));
+    assert!(is_cancel_input("EXIT"));
+    assert!(is_cancel_input("cancel"));
+
+    assert!(!is_cancel_input(""));
+    assert!(!is_cancel_input("1"));
+    assert!(!is_cancel_input("2"));
+    assert!(!is_cancel_input("new-session"));
+    assert!(!is_cancel_input("/path/to/folder"));
+}

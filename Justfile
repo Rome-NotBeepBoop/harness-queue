@@ -12,53 +12,7 @@ help:
 # Test the experimental branch: run feature tests, full suite, compile, and show interactive instructions
 # Pass subcommands like `tui`, `run`, or `test` to test drive: `just experimental tui`
 experimental *args:
-    #!/usr/bin/env bash
-    set -e
-    ARGS="{{args}}"
-    if [ "$ARGS" = "tui" ] || [ "$ARGS" = "--tui" ]; then
-        echo "==> Running hq in interactive TUI mode (experimental branch)..."
-        cargo run -- --tui
-    elif [ "$ARGS" = "run" ]; then
-        echo "==> Running hq in CLI mode (experimental branch)..."
-        cargo run --
-    elif [ "$ARGS" = "test" ]; then
-        echo "==> Running full workspace tests..."
-        cargo test --all-targets
-    elif [ -n "$ARGS" ]; then
-        echo "==> Running hq with args: $ARGS"
-        cargo run -- {{args}}
-    else
-        echo "========================================================================"
-        echo "  Testing experimental branch: Terminal Fallback & Agent Session Picker"
-        echo "========================================================================"
-        BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
-        echo "Git branch: $BRANCH"
-        if [ "$BRANCH" != "experimental" ]; then
-            echo "Notice: Current branch is '$BRANCH', not 'experimental'."
-            echo "Run 'git checkout experimental' to switch."
-        fi
-        echo ""
-        echo "==> Step 1/3: Running experimental unit & integration tests..."
-        cargo test --test test_windows_compatibility \
-                   --test test_session_discovery \
-                   --test test_fallback_adapter \
-                   --test test_cli_fallback_selection
-        echo ""
-        echo "==> Step 2/3: Running full workspace test suite (all 85+ tests)..."
-        cargo test --all-targets
-        echo ""
-        echo "==> Step 3/3: Compiling debug binary..."
-        cargo build
-        echo ""
-        echo "========================================================================"
-        echo "✓ Experimental branch verified! All tests passed and binary is built."
-        echo ""
-        echo "To test interactively in your terminal:"
-        echo "  just experimental tui         # Test interactive TUI fallback picker"
-        echo "  just experimental run         # Test CLI fallback prompt queue"
-        echo "  just experimental --clipboard # Test fallback with clipboard sync"
-        echo "========================================================================"
-    fi
+    @-./scripts/experimental.sh {{args}}
 
 # Run hq in debug mode (passes all arguments through)
 run *args:
