@@ -37,18 +37,39 @@ pub fn format_session_label(session: &DiscoveredSession) -> String {
 }
 
 /// Convert seconds since UNIX epoch to MM/DD/YYYY hh:mma (e.g. 07/11/2026 11:30pm)
+#[cfg(unix)]
+fn get_local_datetime(ts_secs: u64) -> (u32, u32, u32, u32, u32) {
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let t = ts_secs as libc::time_t;
+    unsafe {
+        libc::localtime_r(&t, &mut tm);
+    }
+    (
+        (tm.tm_year + 1900) as u32,
+        (tm.tm_mon + 1) as u32,
+        tm.tm_mday as u32,
+        tm.tm_hour as u32,
+        tm.tm_min as u32,
+    )
+}
+
+#[cfg(not(unix))]
+fn get_local_datetime(ts_secs: u64) -> (u32, u32, u32, u32, u32) {
+    epoch_secs_to_datetime(ts_secs)
+}
+
 pub fn format_timestamp(ts_secs: u64) -> String {
-    let (year, month, day, hour, min) = epoch_secs_to_datetime(ts_secs);
+    let (year, month, day, hour, min) = get_local_datetime(ts_secs);
     let ampm = if hour < 12 { "am" } else { "pm" };
     let hour12 = match hour % 12 {
         0 => 12,
         h => h,
     };
-    format!("{:02}/{:02}/{:04} {:02}:{:02}{}", month, day, year, hour12, min, ampm)
+    format!("{:02}/{:02}/{:04} {:02}:{:02}{}", day, month, year, hour12, min, ampm)
 }
 
 /// Convert civil epoch seconds to UTC (year, month, day, hour, min)
-fn epoch_secs_to_datetime(ts: u64) -> (u32, u32, u32, u32, u32) {
+pub fn epoch_secs_to_datetime(ts: u64) -> (u32, u32, u32, u32, u32) {
     let sec_in_day = (ts % 86400) as u32;
     let hour = sec_in_day / 3600;
     let min = (sec_in_day % 3600) / 60;
@@ -173,56 +194,120 @@ fn extract_workspace_info(uris_json: &str) -> (String, String) {
 
 /// Discover sessions for Google Antigravity (AGY) from conversation_summaries.db
 pub fn discover_agy_sessions(custom_db_path: Option<&Path>) -> Result<Vec<DiscoveredSession>, String> {
-    let db_path = match custom_db_path {
-        Some(p) => p.to_path_buf(),
-        None => resolve_home_dir()
-            .join(".gemini")
-            .join("antigravity")
-            .join("conversation_summaries.db"),
+    let candidate_paths = if let Some(p) = custom_db_path {
+        vec![p.to_path_buf()]
+    } else {
+        let home = resolve_home_dir();
+        let mut paths = Vec::new();
+        if let Ok(env_dir) = std::env::var("GEMINI_DIR") {
+            paths.push(PathBuf::from(env_dir).join("conversation_summaries.db"));
+        }
+        if let Ok(env_dir) = std::env::var("ANTIGRAVITY_DATA_DIR") {
+            paths.push(PathBuf::from(env_dir).join("conversation_summaries.db"));
+        }
+        // Active CLI directory first
+        paths.push(home.join(".gemini").join("antigravity-cli").join("conversation_summaries.db"));
+        // Standalone / GUI directory second
+        paths.push(home.join(".gemini").join("antigravity").join("conversation_summaries.db"));
+        paths
     };
 
-    if !db_path.exists() {
-        return Ok(Vec::new());
-    }
+    let mut session_map: std::collections::HashMap<String, DiscoveredSession> =
+        std::collections::HashMap::new();
 
-    let conn = rusqlite::Connection::open_with_flags(&db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|e| format!("Failed to open AGY conversation_summaries.db: {}", e))?;
+    for db_path in &candidate_paths {
+        if !db_path.exists() {
+            continue;
+        }
 
-    let mut stmt = conn
-        .prepare(
-            "SELECT conversation_id, title, workspace_uris, last_modified_time
+        let conn = match rusqlite::Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        // Try rich query with preview and nesting_depth filter (to exclude internal subagents)
+        let query_res = conn.prepare(
+            "SELECT conversation_id, title, preview, workspace_uris, last_modified_time
              FROM conversation_summaries
+             WHERE nesting_depth = 0 OR nesting_depth IS NULL
              ORDER BY last_modified_time DESC
-             LIMIT 20",
-        )
-        .map_err(|e| format!("Failed to prepare query: {}", e))?;
+             LIMIT 30",
+        );
 
-    let rows = stmt
-        .query_map([], |row| {
-            let id: String = row.get(0)?;
-            let title: String = row.get(1).unwrap_or_default();
-            let uris: String = row.get(2).unwrap_or_default();
-            let raw_time: String = row.get(3).unwrap_or_default();
-            Ok((id, title, uris, raw_time))
-        })
-        .map_err(|e| format!("Query failed: {}", e))?;
+        let rows: Vec<(String, String, String, String)> = match query_res {
+            Ok(mut stmt) => {
+                let mapped = stmt.query_map([], |row| {
+                    let id: String = row.get(0)?;
+                    let title: String = row.get(1).unwrap_or_default();
+                    let preview: String = row.get(2).unwrap_or_default();
+                    let uris: String = row.get(3).unwrap_or_default();
+                    let raw_time: String = row.get(4).unwrap_or_default();
+                    let effective_title = if !title.trim().is_empty() {
+                        title
+                    } else if !preview.trim().is_empty() {
+                        preview.lines().next().unwrap_or("").chars().take(40).collect()
+                    } else {
+                        "".to_string()
+                    };
+                    Ok((id, effective_title, uris, raw_time))
+                });
+                mapped
+                    .map(|m| m.into_iter().flatten().collect())
+                    .unwrap_or_default()
+            }
+            Err(_) => {
+                // Fallback for minimal schemas without preview / nesting_depth
+                let fallback = conn.prepare(
+                    "SELECT conversation_id, title, workspace_uris, last_modified_time
+                     FROM conversation_summaries
+                     ORDER BY last_modified_time DESC
+                     LIMIT 30",
+                );
+                match fallback {
+                    Ok(mut stmt) => {
+                        let mapped = stmt.query_map([], |row| {
+                            let id: String = row.get(0)?;
+                            let title: String = row.get(1).unwrap_or_default();
+                            let uris: String = row.get(2).unwrap_or_default();
+                            let raw_time: String = row.get(3).unwrap_or_default();
+                            Ok((id, title, uris, raw_time))
+                        });
+                        mapped
+                            .map(|m| m.into_iter().flatten().collect())
+                            .unwrap_or_default()
+                    }
+                    Err(_) => Vec::new(),
+                }
+            }
+        };
 
-    let mut sessions = Vec::new();
-    for r in rows.flatten() {
-        let (id, title, uris, raw_time) = r;
-        let ts = parse_iso_or_sqlite_time(&raw_time);
-        let formatted_time = ts.map(format_timestamp).unwrap_or_else(|| "unknown".to_string());
-        let (workspace, workspace_path) = extract_workspace_info(&uris);
+        for (id, title, uris, raw_time) in rows {
+            let ts = parse_iso_or_sqlite_time(&raw_time);
+            let formatted_time = ts.map(format_timestamp).unwrap_or_else(|| "unknown".to_string());
+            let (workspace, workspace_path) = extract_workspace_info(&uris);
 
-        sessions.push(DiscoveredSession {
-            session_id: id,
-            title,
-            workspace,
-            workspace_path,
-            updated_at: ts,
-            formatted_time,
-        });
+            let session = DiscoveredSession {
+                session_id: id.clone(),
+                title,
+                workspace,
+                workspace_path,
+                updated_at: ts,
+                formatted_time,
+            };
+
+            if let Some(existing) = session_map.get_mut(&id) {
+                if session.updated_at > existing.updated_at {
+                    *existing = session;
+                }
+            } else {
+                session_map.insert(id, session);
+            }
+        }
     }
+
+    let mut sessions: Vec<DiscoveredSession> = session_map.into_values().collect();
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions.truncate(20);
 
     Ok(sessions)
 }

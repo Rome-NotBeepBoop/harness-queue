@@ -50,6 +50,90 @@ fn test_format_timestamp_structure() {
 }
 
 #[test]
+fn test_format_timestamp_day_month_year() {
+    let raw = "2026-11-07 11:30:00+00:00";
+    let ts = parse_iso_or_sqlite_time(raw).unwrap();
+    let formatted = format_timestamp(ts);
+    // Day should be first: 07/11/2026
+    assert!(
+        formatted.starts_with("07/11/2026"),
+        "Formatted timestamp must be DD/MM/YYYY, got: {}",
+        formatted
+    );
+}
+
+#[test]
+fn test_discover_agy_sessions_with_preview_and_subagent_filter() {
+    let tmp_dir = std::env::temp_dir().join(format!("hq_test_agy_rich_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp_dir);
+    let db_path = tmp_dir.join("conversation_summaries.db");
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute(
+        "CREATE TABLE conversation_summaries (
+            conversation_id TEXT PRIMARY KEY,
+            title TEXT,
+            preview TEXT,
+            workspace_uris TEXT,
+            last_modified_time TEXT,
+            nesting_depth INTEGER
+        )",
+        [],
+    ).unwrap();
+
+    // Top-level session with title
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![
+            "c-top-1",
+            "Cross-Platform Windows Terminal Agent Support",
+            "Cross-Platform Windows Terminal Agent Support",
+            "[\"file:///Users/romey/Developer/harness-queue\"]",
+            "2026-11-07 12:40:41+00:00",
+            0
+        ],
+    ).unwrap();
+
+    // Subagent session with nesting_depth = 1 (should be excluded)
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![
+            "c-subagent-1",
+            "",
+            "",
+            "[\"file:///Users/romey/Developer/harness-queue\"]",
+            "2026-11-07 13:00:00+00:00",
+            1
+        ],
+    ).unwrap();
+
+    // Top-level session with empty title but non-empty preview
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![
+            "c-top-2",
+            "",
+            "Explain how harness-queue works\nSecond line",
+            "[\"file:///Users/romey/Developer/harness-queue\"]",
+            "2026-11-06 10:00:00+00:00",
+            0
+        ],
+    ).unwrap();
+
+    let sessions = discover_agy_sessions(Some(&db_path)).expect("must discover agy sessions");
+    // Subagent should be filtered out
+    assert_eq!(sessions.len(), 2);
+    assert_eq!(sessions[0].session_id, "c-top-1");
+    assert_eq!(sessions[0].title, "Cross-Platform Windows Terminal Agent Support");
+    assert!(sessions[0].formatted_time.starts_with("07/11/2026"));
+
+    assert_eq!(sessions[1].session_id, "c-top-2");
+    assert_eq!(sessions[1].title, "Explain how harness-queue works");
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
 fn test_discover_agy_sessions_from_sqlite() {
     let tmp_dir = std::env::temp_dir().join(format!("hq_test_agy_{}", std::process::id()));
     let _ = std::fs::create_dir_all(&tmp_dir);
