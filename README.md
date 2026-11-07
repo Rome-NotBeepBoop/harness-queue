@@ -24,6 +24,8 @@ Minimal, universal, terminal-based agent queue that works alongside existing cod
 ## What's New
 
 - **Interactive TUI Mode (`hq --tui`)**: Fullscreen terminal interface powered by `ratatui` with live split-panel overview of queued items, real-time agent status badges (`● WATCHING`, `⚙️ BUSY`, `⏳ QUOTA WAIT`, `✓ READY`), scrollable event logs, and an interactive prompt input field.
+- **Terminal Agent Selection Fallback (Windows Terminal & Standalone Panes)**: When running in terminals without split-pane detection (like Windows Terminal on Windows or standalone tabs), `hq` smoothly notifies you and provides an interactive selection menu. Choose your agent harness (AGY, Codex, Claude Code, OpenCode, OMP, Pi) and select from recent sessions displaying `<workspace> '<title>' <timestamp>`.
+- **Background Native Session Dispatch**: Delivers prompts straight to the agent's background session/queue without stealing mouse or keyboard focus.
 - **Unified CLI (`hq` or `hq --cli`)**: Calling `hq` or `hq --cli` runs the default CLI experience. Only `--tui` differs.
 - **Infinite / Multiple Prompt Queueing**: Queue prompt `#1`, `#2`, `#3`... indefinitely! While the agent is working or waiting for quota resets, you can queue subsequent prompts anytime. They are dispatched automatically in FIFO order as soon as the agent becomes ready.
 - **Image Compatibility**: Seamlessly paste image paths (e.g. `@/var/folders/.../orca-paste-....png`, direct file paths, or relative paths). Images are automatically detected, validated for file existence, sized, and forwarded with rich multimodal context to agents like Codex, Claude Code, and Pi.
@@ -120,6 +122,24 @@ In TUI mode:
 - **Input Field (Bottom)**: Type new prompts or paste image paths anytime and hit `[Enter]` to enqueue.
 - **Detach Cleanly**: Press `[Esc]`, `[Ctrl+C]`, or type `q` to detach safely without killing the agent.
 
+### 3. Terminal Agent Selection & Windows Terminal (`--select-agent`, `--agent`)
+```bash
+# Force terminal agent selection menu (even if panes exist)
+hq --select-agent
+
+# Or inside TUI mode:
+hq --tui --select-agent
+
+# Pre-select an agent harness (e.g. agy, codex, claude):
+hq --agent agy
+
+# Optionally sync dispatched prompts with the host clipboard:
+hq --clipboard
+```
+
+When no Herdr, Orca, or Ghostty terminal panes are detected (for example on Windows Terminal), `hq` automatically notifies you and launches Terminal Agent Selection.
+
+
 ---
 
 ## Image Compatibility
@@ -148,6 +168,7 @@ Supported formats: `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.bmp`, `.t
 | **Orca IDE** | Native CLI (`orca terminal`) + `TERM_PROGRAM=Orca` | Native IPC (`orca terminal send`) | Auto-detects same-tab splits and active agent sessions. |
 | **Herdr** | Herdr CLI (`herdr pane`) + `HERDR_PANE_ID` | Direct agent IPC (`herdr agent prompt`) | Auto-detects adjacent directional panes. |
 | **Ghostty** | Ghostty environment + CLI window inspection | Native split pane send | macOS native split panes. |
+| **Windows Terminal / Standalone** | Fallback detection (`WT_SESSION` or standalone pane) | Native agent CLI / session IPC | Interactive agent and session selection (`<workspace> '<title>' <timestamp>`). |
 
 ### Supported Coding Agents
 
