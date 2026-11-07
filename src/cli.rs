@@ -372,7 +372,9 @@ pub fn select_session_menu<R: BufRead, W: Write>(
 
     if choice_idx >= 1 && choice_idx <= sessions.len() {
         let chosen = &sessions[choice_idx - 1];
-        let cwd = if chosen.workspace != "default" && !chosen.workspace.is_empty() {
+        let cwd = if !chosen.workspace_path.is_empty() && chosen.workspace_path != "." {
+            chosen.workspace_path.clone()
+        } else if chosen.workspace != "default" && !chosen.workspace.is_empty() {
             chosen.workspace.clone()
         } else {
             default_cwd
@@ -395,6 +397,9 @@ pub fn select_session_menu<R: BufRead, W: Write>(
             Ok(0) => return None,
             Ok(_) => {
                 let t = sess_line.trim().to_string();
+                if t.eq_ignore_ascii_case("q") || t.eq_ignore_ascii_case("exit") {
+                    return None;
+                }
                 if t.is_empty() {
                     "new-session".to_string()
                 } else {
@@ -411,6 +416,9 @@ pub fn select_session_menu<R: BufRead, W: Write>(
             Ok(0) => default_cwd,
             Ok(_) => {
                 let t = cwd_line.trim().to_string();
+                if t.eq_ignore_ascii_case("q") || t.eq_ignore_ascii_case("exit") {
+                    return None;
+                }
                 if t.is_empty() {
                     default_cwd
                 } else {

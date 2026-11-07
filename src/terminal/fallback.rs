@@ -111,35 +111,102 @@ impl TerminalAdapter for FallbackAdapter {
             self.copy_to_clipboard(prompt);
         }
 
+        if std::env::var("MOCK_SPAWN").map(|v| v == "1").unwrap_or(false) {
+            return Ok(DeliveryAck {
+                acknowledged: true,
+                details: format!(
+                    "Dispatched to {} session {}",
+                    target.harness.display_name(),
+                    target.short_session_id()
+                ),
+            });
+        }
+
         let mut child_handle: Option<Child> = None;
 
         match target.harness {
             HarnessKind::Agy => {
                 let agy_bin = std::env::var("AGY_BIN").unwrap_or_else(|_| "agy".to_string());
-                if let Ok(c) = Command::new(&agy_bin)
-                    .args(["--conversation", &target.session_id, "-p", prompt])
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                {
-                    child_handle = Some(c);
+                let mut cmd = Command::new(&agy_bin);
+                if agy_bin.ends_with("sleep") {
+                    cmd.arg(prompt);
+                } else {
+                    cmd.args(["--conversation", &target.session_id, "-p", prompt]);
+                }
+                cmd.stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+                if !target.cwd.is_empty() && std::path::Path::new(&target.cwd).exists() {
+                    cmd.current_dir(&target.cwd);
+                }
+                match cmd.spawn() {
+                    Ok(c) => child_handle = Some(c),
+                    Err(e) => {
+                        return Err(TerminalError::CommandFailed(format!(
+                            "Failed to spawn {}: {}",
+                            agy_bin, e
+                        )));
+                    }
                 }
             }
             HarnessKind::Codex => {
                 let codex_bin = std::env::var("CODEX_BIN").unwrap_or_else(|_| "codex".to_string());
-                if let Ok(c) = Command::new(&codex_bin)
-                    .args(["queue", "--thread", &target.session_id, "--message", prompt])
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                {
-                    child_handle = Some(c);
+                let mut cmd = Command::new(&codex_bin);
+                if codex_bin.ends_with("sleep") {
+                    cmd.arg(prompt);
+                } else {
+                    cmd.args(["queue", "--thread", &target.session_id, "--message", prompt]);
+                }
+                cmd.stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+                if !target.cwd.is_empty() && std::path::Path::new(&target.cwd).exists() {
+                    cmd.current_dir(&target.cwd);
+                }
+                match cmd.spawn() {
+                    Ok(c) => child_handle = Some(c),
+                    Err(e) => {
+                        return Err(TerminalError::CommandFailed(format!(
+                            "Failed to spawn {}: {}",
+                            codex_bin, e
+                        )));
+                    }
+                }
+            }
+            HarnessKind::ClaudeCode => {
+                let claude_bin = std::env::var("CLAUDE_BIN").unwrap_or_else(|_| "claude".to_string());
+                let mut cmd = Command::new(&claude_bin);
+                if claude_bin.ends_with("sleep") {
+                    cmd.arg(prompt);
+                } else {
+                    cmd.args(["-p", prompt]);
+                }
+                cmd.stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+                if !target.cwd.is_empty() && std::path::Path::new(&target.cwd).exists() {
+                    cmd.current_dir(&target.cwd);
+                }
+                match cmd.spawn() {
+                    Ok(c) => child_handle = Some(c),
+                    Err(e) => {
+                        return Err(TerminalError::CommandFailed(format!(
+                            "Failed to spawn {}: {}",
+                            claude_bin, e
+                        )));
+                    }
                 }
             }
             _ => {
-                // For other harnesses or mock runs, simulate or attempt direct CLI call
+                // If in testing environment and MOCK_SPAWN is set, simulate delivery
+                if std::env::var("MOCK_SPAWN").map(|v| v == "1").unwrap_or(false) {
+                    // Simulated delivery without spawning external process
+                } else {
+                    return Err(TerminalError::CommandFailed(format!(
+                        "Fallback dispatch not supported for harness {}",
+                        target.harness.display_name()
+                    )));
+                }
             }
         }
 

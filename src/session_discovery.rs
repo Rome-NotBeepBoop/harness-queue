@@ -11,6 +11,7 @@ pub struct DiscoveredSession {
     pub session_id: String,
     pub title: String,
     pub workspace: String,
+    pub workspace_path: String,
     pub updated_at: Option<u64>,
     pub formatted_time: String,
 }
@@ -140,33 +141,34 @@ pub fn resolve_home_dir() -> PathBuf {
     PathBuf::from(".")
 }
 
-fn extract_workspace_name(uris_json: &str) -> String {
+fn extract_workspace_info(uris_json: &str) -> (String, String) {
+    let default_cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| ".".to_string());
+    let default_name = std::env::current_dir()
+        .ok()
+        .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "workspace".to_string());
+
     if let Ok(val) = serde_json::from_str::<Value>(uris_json) {
-        if let Some(arr) = val.as_array() {
-            if let Some(first) = arr.first().and_then(|v| v.as_str()) {
-                let clean = first.trim_start_matches("file://");
-                let p = Path::new(clean);
-                if let Some(fname) = p.file_name().and_then(|s| s.to_str()) {
-                    if !fname.is_empty() {
-                        return fname.to_string();
-                    }
-                }
-            }
-        } else if let Some(first) = val.as_str() {
+        let uri_opt = if let Some(arr) = val.as_array() {
+            arr.first().and_then(|v| v.as_str())
+        } else {
+            val.as_str()
+        };
+
+        if let Some(first) = uri_opt {
             let clean = first.trim_start_matches("file://");
             let p = Path::new(clean);
-            if let Some(fname) = p.file_name().and_then(|s| s.to_str()) {
-                if !fname.is_empty() {
-                    return fname.to_string();
-                }
+            let fname = p.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let abs_path = clean.to_string();
+            if !fname.is_empty() {
+                return (fname, abs_path);
             }
         }
     }
-    // Fallback: current directory name
-    std::env::current_dir()
-        .ok()
-        .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
-        .unwrap_or_else(|| "workspace".to_string())
+
+    (default_name, default_cwd)
 }
 
 /// Discover sessions for Google Antigravity (AGY) from conversation_summaries.db
@@ -210,12 +212,13 @@ pub fn discover_agy_sessions(custom_db_path: Option<&Path>) -> Result<Vec<Discov
         let (id, title, uris, raw_time) = r;
         let ts = parse_iso_or_sqlite_time(&raw_time);
         let formatted_time = ts.map(format_timestamp).unwrap_or_else(|| "unknown".to_string());
-        let workspace = extract_workspace_name(&uris);
+        let (workspace, workspace_path) = extract_workspace_info(&uris);
 
         sessions.push(DiscoveredSession {
             session_id: id,
             title,
             workspace,
+            workspace_path,
             updated_at: ts,
             formatted_time,
         });
@@ -240,6 +243,9 @@ pub fn discover_codex_sessions(custom_jsonl_path: Option<&Path>) -> Result<Vec<D
     let file = File::open(&jsonl_path).map_err(|e| format!("Failed to open Codex session_index.jsonl: {}", e))?;
     let reader = BufReader::new(file);
 
+    let default_cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| ".".to_string());
     let default_workspace = std::env::current_dir()
         .ok()
         .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
@@ -273,6 +279,7 @@ pub fn discover_codex_sessions(custom_jsonl_path: Option<&Path>) -> Result<Vec<D
                     session_id: id,
                     title,
                     workspace: default_workspace.clone(),
+                    workspace_path: default_cwd.clone(),
                     updated_at: ts,
                     formatted_time,
                 });

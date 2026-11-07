@@ -11,6 +11,7 @@ fn test_format_session_label_exact_style() {
         session_id: "conv-123".to_string(),
         title: "adding features in hq".to_string(),
         workspace: "harness-queue".to_string(),
+        workspace_path: "/Users/romey/Developer/harness-queue".to_string(),
         updated_at: Some(1794051000),
         formatted_time: "07/11/2026 11:30pm".to_string(),
     };
@@ -24,6 +25,7 @@ fn test_format_session_label_empty_title_fallback() {
         session_id: "conv-456".to_string(),
         title: "".to_string(),
         workspace: "harness-queue".to_string(),
+        workspace_path: "/Users/romey/Developer/harness-queue".to_string(),
         updated_at: None,
         formatted_time: "unknown".to_string(),
     };
@@ -110,4 +112,19 @@ fn test_discover_sessions_for_harness() {
     // Should not panic even if system has or has not active sessions
     let _ = sessions;
 }
+
+#[test]
+fn test_corrupt_database_returns_empty_vector_not_panic() {
+    let tmp_dir = std::env::temp_dir().join(format!("hq_test_corrupt_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp_dir);
+    let db_path = tmp_dir.join("conversation_summaries.db");
+    // Write garbage bytes
+    std::fs::write(&db_path, b"not a valid sqlite file").unwrap();
+
+    let res = discover_agy_sessions(Some(&db_path));
+    // Either returns empty vector or clean error, must NOT panic
+    assert!(res.is_err() || res.unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
 
